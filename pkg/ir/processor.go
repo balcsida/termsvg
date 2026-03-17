@@ -1,6 +1,7 @@
 package ir
 
 import (
+	"strings"
 	"time"
 
 	"github.com/mrmarble/termsvg/pkg/asciicast"
@@ -86,14 +87,19 @@ func (p *Processor) Process(cast *asciicast.Cast) (*Recording, error) {
 		prevTime = frameTime
 	}
 
-	// 5. Deduplicate consecutive identical frames
+	// 5. Clean up frames: strip empty rows and trim trailing whitespace
+	for i := range frames {
+		frames[i].Rows = cleanRows(frames[i].Rows, catalog)
+	}
+
+	// 6. Deduplicate consecutive identical frames (ignoring cursor-only changes)
 	frames = deduplicateFrames(frames)
 
-	// 6. Finalize statistics
+	// 7. Finalize statistics
 	stats.TotalFrames = len(frames)
 	stats.UniqueColors = catalog.Count()
 
-	// 6. Calculate duration
+	// 8. Calculate duration
 	var duration time.Duration
 	if len(frames) > 0 {
 		duration = frames[len(frames)-1].Time
@@ -303,6 +309,45 @@ func floatSecondsToDuration(seconds float64) time.Duration {
 	return time.Duration(seconds * float64(time.Second))
 }
 
+// cleanRows strips empty rows and trims trailing whitespace from runs.
+func cleanRows(rows []Row, catalog *color.Catalog) []Row {
+	cleaned := make([]Row, 0, len(rows))
+	for _, row := range rows {
+		row.Runs = cleanRuns(row.Runs, catalog)
+		if len(row.Runs) > 0 {
+			cleaned = append(cleaned, row)
+		}
+	}
+	return cleaned
+}
+
+// cleanRuns removes invisible runs and trims trailing whitespace.
+func cleanRuns(runs []TextRun, catalog *color.Catalog) []TextRun {
+	cleaned := make([]TextRun, 0, len(runs))
+	for _, run := range runs {
+		if run.Text == "" {
+			continue
+		}
+		if strings.TrimSpace(run.Text) == "" && catalog.IsDefault(run.Attrs.BG) {
+			continue
+		}
+		cleaned = append(cleaned, run)
+	}
+
+	// Trim trailing whitespace from the last run (if default BG)
+	if n := len(cleaned); n > 0 {
+		last := &cleaned[n-1]
+		if catalog.IsDefault(last.Attrs.BG) {
+			last.Text = strings.TrimRight(last.Text, " ")
+			if last.Text == "" {
+				cleaned = cleaned[:n-1]
+			}
+		}
+	}
+
+	return cleaned
+}
+
 // deduplicateFrames removes consecutive identical frames and consolidates their delays.
 // This optimizes the recording by eliminating redundant frames.
 func deduplicateFrames(frames []Frame) []Frame {
@@ -343,12 +388,8 @@ func deduplicateFrames(frames []Frame) []Frame {
 }
 
 // framesEqual compares two frames for equality (content only, not timing).
+// Cursor differences are ignored — cursor-only changes don't warrant a new frame.
 func framesEqual(a, b *Frame) bool {
-	// Compare cursor state
-	if a.Cursor != b.Cursor {
-		return false
-	}
-
 	// Compare row count
 	if len(a.Rows) != len(b.Rows) {
 		return false
