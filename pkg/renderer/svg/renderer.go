@@ -28,6 +28,12 @@ type canvas struct {
 	classNames map[color.ID]string
 }
 
+type renderedRow struct {
+	svg   string
+	count int
+	id    string
+}
+
 // Layout constants for SVG rendering
 const (
 	RowHeight  = 25 // pixels per row
@@ -107,6 +113,8 @@ func (c *canvas) render(ctx context.Context) error {
 	default:
 	}
 
+	frameRows, rowDefs := c.collectRows()
+
 	// SVG header
 	width := c.paddedWidth()
 	height := c.paddedHeight()
@@ -124,8 +132,10 @@ func (c *canvas) render(ctx context.Context) error {
 		contentY = Padding * HeaderSize
 	}
 
-	fmt.Fprintf(c.w, `<defs><clipPath id="clip"><rect width="%d" height="%d"/></clipPath></defs>`,
+	fmt.Fprintf(c.w, `<defs><clipPath id="clip"><rect width="%d" height="%d"/></clipPath>`,
 		c.contentWidth(), c.contentHeight())
+	c.writeRowDefs(rowDefs)
+	fmt.Fprint(c.w, `</defs>`)
 
 	fmt.Fprintf(c.w, `<g transform="translate(%d,%d)" clip-path="url(#clip)">`, Padding, contentY)
 
@@ -143,7 +153,7 @@ func (c *canvas) render(ctx context.Context) error {
 
 	fmt.Fprintf(c.w, `<g style="animation:k %.3fs %s steps(1,end)">`, duration, loopAttr)
 
-	c.writeFrames()
+	c.writeFrames(frameRows)
 
 	fmt.Fprint(c.w, `</g></g></svg>`)
 
@@ -263,26 +273,72 @@ func (c *canvas) writeBGFilters() {
 	fmt.Fprint(c.w, "</defs>")
 }
 
-func (c *canvas) writeFrames() {
+func (c *canvas) collectRows() ([][]*renderedRow, []*renderedRow) {
+	seen := make(map[string]*renderedRow)
+	frames := make([][]*renderedRow, len(c.rec.Frames))
+	ordered := make([]*renderedRow, 0)
+
+	for i, frame := range c.rec.Frames {
+		for _, row := range frame.Rows {
+			var sb strings.Builder
+			c.writeRow(&sb, row)
+			markup := sb.String()
+			entry := seen[markup]
+			if entry == nil {
+				entry = &renderedRow{svg: markup}
+				seen[markup] = entry
+				ordered = append(ordered, entry)
+			}
+			entry.count++
+			frames[i] = append(frames[i], entry)
+		}
+	}
+
+	defs := make([]*renderedRow, 0)
+	for _, entry := range ordered {
+		id := fmt.Sprintf("r%d", len(defs))
+		use := fmt.Sprintf(`<use href="#%s"/>`, id)
+		inlineBytes := entry.count * len(entry.svg)
+		definitionBytes := len(`<g id="">`) + len(id) + len(entry.svg) + len(`</g>`) + entry.count*len(use)
+		if definitionBytes < inlineBytes {
+			entry.id = id
+			defs = append(defs, entry)
+		}
+	}
+
+	return frames, defs
+}
+
+func (c *canvas) writeRowDefs(defs []*renderedRow) {
+	for _, row := range defs {
+		fmt.Fprintf(c.w, `<g id="%s">%s</g>`, row.id, row.svg)
+	}
+}
+
+func (c *canvas) writeFrames(frameRows [][]*renderedRow) {
 	pw := c.paddedWidth()
 	for i, frame := range c.rec.Frames {
 		offset := pw * i
 		fmt.Fprintf(c.w, `<g transform="translate(%d,0)">`, offset)
-		c.writeFrame(frame)
+		for _, row := range frameRows[i] {
+			if row.id != "" {
+				fmt.Fprintf(c.w, `<use href="#%s"/>`, row.id)
+			} else {
+				fmt.Fprint(c.w, row.svg)
+			}
+		}
+
+		// Render cursor if visible and cursor rendering is enabled
+		if c.config.ShowCursor && frame.Cursor.Visible {
+			c.writeCursor(frame.Cursor)
+		}
 		fmt.Fprint(c.w, "</g>")
 	}
 }
 
-func (c *canvas) writeFrame(frame ir.Frame) {
-	for _, row := range frame.Rows {
-		for _, run := range row.Runs {
-			c.writeTextRun(run, row.Y)
-		}
-	}
-
-	// Render cursor if visible and cursor rendering is enabled
-	if c.config.ShowCursor && frame.Cursor.Visible {
-		c.writeCursor(frame.Cursor)
+func (c *canvas) writeRow(w io.Writer, row ir.Row) {
+	for _, run := range row.Runs {
+		c.writeTextRun(w, run, row.Y)
 	}
 }
 
@@ -295,7 +351,7 @@ func (c *canvas) writeCursor(cursor ir.Cursor) {
 		x, y, ColWidth, RowHeight)
 }
 
-func (c *canvas) writeTextRun(run ir.TextRun, rowY int) {
+func (c *canvas) writeTextRun(w io.Writer, run ir.TextRun, rowY int) {
 	if run.Text == "" {
 		return
 	}
@@ -344,6 +400,6 @@ func (c *canvas) writeTextRun(run ir.TextRun, rowY int) {
 		filterAttr = fmt.Sprintf(` filter="url(#bg_%d)"`, run.Attrs.BG)
 	}
 
-	fmt.Fprintf(c.w, `<text x="%d" y="%d" xml:space="preserve"%s%s>%s</text>`,
+	fmt.Fprintf(w, `<text x="%d" y="%d" xml:space="preserve"%s%s>%s</text>`,
 		x, y, classAttr, filterAttr, html.EscapeString(text))
 }

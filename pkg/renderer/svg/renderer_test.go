@@ -621,7 +621,7 @@ func TestRender_PreservesUnderlinedWhitespace(t *testing.T) {
 	rec := createTestRecording()
 	rec.Frames = []ir.Frame{{
 		Rows: []ir.Row{{
-			Y: 0,
+			Y:    0,
 			Runs: []ir.TextRun{{Text: "   ", Attrs: ir.CellAttrs{Underline: true}}},
 		}},
 	}}
@@ -633,5 +633,82 @@ func TestRender_PreservesUnderlinedWhitespace(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), `class="underline">   </text>`) {
 		t.Fatal("SVG dropped visible underlined spaces")
+	}
+}
+
+func TestRender_ReusesProfitableRows(t *testing.T) {
+	rec := createTestRecording()
+	row := ir.Row{Y: 0, Runs: []ir.TextRun{{Text: "ROW:" + strings.Repeat("x", 96)}}}
+	rec.Frames = []ir.Frame{
+		{Time: 0, Rows: []ir.Row{row}},
+		{Time: 500 * time.Millisecond, Rows: []ir.Row{row}},
+		{Time: time.Second, Rows: []ir.Row{row}},
+	}
+	rec.Duration = time.Second
+
+	var buf bytes.Buffer
+	if err := New(renderer.DefaultConfig()).Render(context.Background(), rec, &buf); err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	svg := buf.String()
+	if strings.Count(svg, "ROW:") != 1 {
+		t.Fatalf("repeated row serialized %d times, want 1", strings.Count(svg, "ROW:"))
+	}
+	if strings.Count(svg, `<use href="#r0"/>`) != 3 {
+		t.Fatalf("row references = %d, want 3", strings.Count(svg, `<use href="#r0"/>`))
+	}
+}
+
+func TestRender_InlinesUnprofitableRows(t *testing.T) {
+	rec := createTestRecording()
+	row := ir.Row{Y: 0, Runs: []ir.TextRun{{Text: "x"}}}
+	rec.Frames = []ir.Frame{{Rows: []ir.Row{row}}, {Time: time.Second, Rows: []ir.Row{row}}}
+	rec.Duration = time.Second
+
+	var buf bytes.Buffer
+	if err := New(renderer.DefaultConfig()).Render(context.Background(), rec, &buf); err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if strings.Contains(buf.String(), `<use href="#r0"/>`) {
+		t.Fatal("short row was reused even though references cost more")
+	}
+}
+
+func TestRender_InlinesUniqueRows(t *testing.T) {
+	rec := createTestRecording()
+	rec.Frames = []ir.Frame{
+		{Rows: []ir.Row{{Y: 0, Runs: []ir.TextRun{{Text: "first unique row"}}}}},
+		{Time: time.Second, Rows: []ir.Row{{Y: 0, Runs: []ir.TextRun{{Text: "second unique row"}}}}},
+	}
+	rec.Duration = time.Second
+
+	var buf bytes.Buffer
+	if err := New(renderer.DefaultConfig()).Render(context.Background(), rec, &buf); err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if strings.Contains(buf.String(), `<use href="#`) {
+		t.Fatal("unique rows were emitted as references")
+	}
+}
+
+func TestRender_PreservesCursorAndTiming(t *testing.T) {
+	rec := createTestRecording()
+	rec.Frames[0].Cursor = ir.Cursor{Col: 2, Row: 1, Visible: true}
+	rec.Frames[1].Cursor = ir.Cursor{Col: 4, Row: 1, Visible: true}
+
+	var buf bytes.Buffer
+	if err := New(renderer.DefaultConfig()).Render(context.Background(), rec, &buf); err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	svg := buf.String()
+	for _, want := range []string{
+		`0.000%{transform:translateX(0px)}`,
+		`50.000%{transform:translateX(-1000px)}`,
+		`<rect class="cursor" x="24" y="25" width="12" height="25"/>`,
+		`<rect class="cursor" x="48" y="25" width="12" height="25"/>`,
+	} {
+		if !strings.Contains(svg, want) {
+			t.Errorf("SVG missing preserved frame state %q", want)
+		}
 	}
 }
