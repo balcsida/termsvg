@@ -204,3 +204,24 @@ func TestAttrsEqual(t *testing.T) {
 		t.Error("Different attrs should not be equal")
 	}
 }
+
+func TestFramesEqual_CursorChange(t *testing.T) {
+	rows := []Row{{Y: 0, Runs: []TextRun{{Text: "same"}}}}
+	base := Frame{Rows: rows, Cursor: Cursor{Col: 4, Row: 0, Visible: true}}
+	tests := []struct {
+		name   string
+		cursor Cursor
+	}{
+		{name: "position", cursor: Cursor{Col: 5, Row: 0, Visible: true}},
+		{name: "visibility", cursor: Cursor{Col: 4, Row: 0, Visible: false}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			changed := Frame{Rows: rows, Cursor: tt.cursor}
+			if framesEqual(&base, &changed) {
+				t.Fatal("framesEqual() ignored a cursor change")
+			}
+		})
+	}
+}

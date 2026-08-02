@@ -387,9 +387,12 @@ func deduplicateFrames(frames []Frame) []Frame {
 	return deduped
 }
 
-// framesEqual compares two frames for equality (content only, not timing).
-// Cursor differences are ignored — cursor-only changes don't warrant a new frame.
+// framesEqual compares visible frame content, including the cursor, not timing.
 func framesEqual(a, b *Frame) bool {
+	if a.Cursor != b.Cursor {
+		return false
+	}
+
 	// Compare row count
 	if len(a.Rows) != len(b.Rows) {
 		return false
