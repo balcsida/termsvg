@@ -579,3 +579,22 @@ func TestIntegration_256Colors(t *testing.T) {
 		t.Fatalf("Failed to write SVG to file: %v", err)
 	}
 }
+
+func TestRender_PreservesUnderlinedWhitespace(t *testing.T) {
+	rec := createTestRecording()
+	rec.Frames = []ir.Frame{{
+		Rows: []ir.Row{{
+			Y: 0,
+			Runs: []ir.TextRun{{Text: "   ", Attrs: ir.CellAttrs{Underline: true}}},
+		}},
+	}}
+	rec.Stats.HasUnderline = true
+
+	var buf bytes.Buffer
+	if err := New(renderer.DefaultConfig()).Render(context.Background(), rec, &buf); err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if !strings.Contains(buf.String(), `class="underline">   </text>`) {
+		t.Fatal("SVG dropped visible underlined spaces")
+	}
+}

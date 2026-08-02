@@ -296,7 +296,7 @@ func (c *canvas) writeTextRun(run ir.TextRun, rowY int) {
 	}
 
 	// Skip whitespace-only runs with default background - nothing visible to render
-	if strings.TrimSpace(run.Text) == "" && c.rec.Colors.IsDefault(run.Attrs.BG) {
+	if strings.TrimSpace(run.Text) == "" && c.rec.Colors.IsDefault(run.Attrs.BG) && !run.Attrs.Underline {
 		return
 	}
 

@@ -1,10 +1,12 @@
 package ir
 
 import (
+	"image/color"
 	"testing"
 	"time"
 
 	"github.com/mrmarble/termsvg/pkg/asciicast"
+	termcolor "github.com/mrmarble/termsvg/pkg/color"
 )
 
 func TestProcessor_Process(t *testing.T) {
@@ -223,5 +225,18 @@ func TestFramesEqual_CursorChange(t *testing.T) {
 				t.Fatal("framesEqual() ignored a cursor change")
 			}
 		})
+	}
+}
+
+func TestCleanRuns_PreservesUnderlinedWhitespace(t *testing.T) {
+	catalog := termcolor.NewCatalog(
+		color.RGBA{R: 255, G: 255, B: 255, A: 255},
+		color.RGBA{A: 255},
+	)
+	runs := []TextRun{{Text: "   ", Attrs: CellAttrs{Underline: true}}}
+
+	got := cleanRuns(runs, catalog)
+	if len(got) != 1 || got[0].Text != "   " {
+		t.Fatalf("cleanRuns() = %#v, want visible underlined spaces", got)
 	}
 }

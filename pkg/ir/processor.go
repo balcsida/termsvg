@@ -328,7 +328,7 @@ func cleanRuns(runs []TextRun, catalog *color.Catalog) []TextRun {
 		if run.Text == "" {
 			continue
 		}
-		if strings.TrimSpace(run.Text) == "" && catalog.IsDefault(run.Attrs.BG) {
+		if strings.TrimSpace(run.Text) == "" && catalog.IsDefault(run.Attrs.BG) && !run.Attrs.Underline {
 			continue
 		}
 		cleaned = append(cleaned, run)
@@ -337,7 +337,7 @@ func cleanRuns(runs []TextRun, catalog *color.Catalog) []TextRun {
 	// Trim trailing whitespace from the last run (if default BG)
 	if n := len(cleaned); n > 0 {
 		last := &cleaned[n-1]
-		if catalog.IsDefault(last.Attrs.BG) {
+		if catalog.IsDefault(last.Attrs.BG) && !last.Attrs.Underline {
 			last.Text = strings.TrimRight(last.Text, " ")
 			if last.Text == "" {
 				cleaned = cleaned[:n-1]
