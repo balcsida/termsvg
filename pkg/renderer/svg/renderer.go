@@ -3,6 +3,7 @@
 package svg
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"html"
@@ -65,14 +66,18 @@ func (r *Renderer) Render(ctx context.Context, rec *ir.Recording, w io.Writer) e
 		return fmt.Errorf("recording has no frames")
 	}
 
+	buf := bufio.NewWriterSize(w, 64*1024)
 	c := &canvas{
-		w:          w,
+		w:          buf,
 		rec:        rec,
 		config:     r.config,
 		classNames: rec.Colors.GenerateClassNames(),
 	}
 
-	return c.render(ctx)
+	if err := c.render(ctx); err != nil {
+		return err
+	}
+	return buf.Flush()
 }
 
 func (c *canvas) contentWidth() int {

@@ -52,6 +52,43 @@ func TestRender_EmptyRecording(t *testing.T) {
 	}
 }
 
+type countingWriter struct {
+	bytes.Buffer
+	writes int
+}
+
+func (w *countingWriter) Write(p []byte) (int, error) {
+	w.writes++
+	return w.Buffer.Write(p)
+}
+
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) {
+	return 0, errors.New("write failed")
+}
+
+func TestRender_BuffersWrites(t *testing.T) {
+	r := New(renderer.DefaultConfig())
+	w := &countingWriter{}
+
+	if err := r.Render(context.Background(), createTestRecording(), w); err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if w.writes != 1 {
+		t.Fatalf("underlying Write() calls = %d, want 1", w.writes)
+	}
+}
+
+func TestRender_ReturnsWriteError(t *testing.T) {
+	err := New(renderer.DefaultConfig()).Render(
+		context.Background(), createTestRecording(), failingWriter{},
+	)
+	if err == nil {
+		t.Fatal("Render() ignored the destination write error")
+	}
+}
+
 func TestRender_BasicStructure(t *testing.T) {
 	r := New(renderer.DefaultConfig())
 	rec := createTestRecording()
