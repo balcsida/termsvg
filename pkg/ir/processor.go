@@ -92,7 +92,7 @@ func (p *Processor) Process(cast *asciicast.Cast) (*Recording, error) {
 		frames[i].Rows = cleanRows(frames[i].Rows, catalog)
 	}
 
-	// 6. Deduplicate consecutive identical frames (ignoring cursor-only changes)
+	// 6. Deduplicate consecutive identical frames, including cursor state
 	frames = deduplicateFrames(frames)
 
 	// 7. Finalize statistics
