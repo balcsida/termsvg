@@ -174,8 +174,10 @@ func (c *canvas) generateCursorKeyframes() string {
 }
 
 func (c *canvas) cursorKeyframes() []keyframePoint[ir.Cursor] {
-	return c.plan.cursor.keyframes(func(a, b ir.Cursor) bool { return a == b })
+	return c.plan.cursor.keyframes(cursorStatesEqual)
 }
+
+func cursorStatesEqual(a, b ir.Cursor) bool { return a == b }
 
 func cursorVisibility(cursor ir.Cursor) string {
 	if cursor.Visible {

@@ -32,8 +32,12 @@ func buildRenderPlan(rec *ir.Recording, showCursor bool) renderPlan {
 		for _, frame := range rec.Frames {
 			cursor = append(cursor, timelinePoint[ir.Cursor]{time: frame.Time, state: frame.Cursor})
 		}
-		plan.cursor = normalizeTimeline(rec.Duration, cursor, func(a, b ir.Cursor) bool { return a == b })
-		plan.cursorEverVisible = slices.ContainsFunc(plan.cursor.points, func(point timelinePoint[ir.Cursor]) bool {
+		plan.cursor = normalizeTimeline(rec.Duration, cursor, cursorStatesEqual)
+		effective := plan.cursor.keyframes(cursorStatesEqual)
+		if len(effective) == 0 && len(plan.cursor.points) > 0 {
+			effective = []keyframePoint[ir.Cursor]{{state: plan.cursor.points[len(plan.cursor.points)-1].state}}
+		}
+		plan.cursorEverVisible = slices.ContainsFunc(effective, func(point keyframePoint[ir.Cursor]) bool {
 			return point.state.Visible
 		})
 		if !plan.cursorEverVisible {

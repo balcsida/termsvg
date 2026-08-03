@@ -1051,6 +1051,15 @@ func TestRender_OmitsCursorFromDiscardedVisibleStates(t *testing.T) {
 				{Time: time.Second, Cursor: ir.Cursor{}},
 			},
 		},
+		{
+			name:     "selector collision discards visible state",
+			duration: time.Duration(1<<63 - 1),
+			frames: []ir.Frame{
+				{Cursor: ir.Cursor{}},
+				{Time: time.Duration(1<<63-1) - 2*time.Nanosecond, Cursor: ir.Cursor{Visible: true}},
+				{Time: time.Duration(1<<63-1) - time.Nanosecond, Cursor: ir.Cursor{}},
+			},
+		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			rec := createTestRecording()
