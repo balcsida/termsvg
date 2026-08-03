@@ -194,6 +194,61 @@ func TestTextRunGrouping(t *testing.T) {
 	}
 }
 
+func TestProcessor_TextRunCellExtents(t *testing.T) {
+	cast := &asciicast.Cast{
+		Header: asciicast.Header{Version: 2, Width: 10, Height: 1},
+		Events: []asciicast.Event{
+			{Time: 0, EventType: asciicast.Output, EventData: "ab\x1b[31mc"},
+		},
+	}
+
+	recording, err := NewProcessor(DefaultProcessorConfig()).Process(cast)
+	if err != nil {
+		t.Fatalf("Process() error = %v", err)
+	}
+
+	runs := recording.Frames[0].Rows[0].Runs
+	if len(runs) != 2 {
+		t.Fatalf("got %d runs, want 2: %#v", len(runs), runs)
+	}
+	if got, want := runs[0].EndCol, 2; got != want {
+		t.Errorf("first EndCol = %d, want %d", got, want)
+	}
+	if got, want := runs[1].StartCol, runs[0].EndCol; got != want {
+		t.Errorf("adjacent boundary = %d, want %d", got, want)
+	}
+	if got, want := runs[1].EndCol, 3; got != want {
+		t.Errorf("second EndCol = %d, want %d", got, want)
+	}
+}
+
+func TestCleanRuns_TrimTrailingSpacesUpdatesEndCol(t *testing.T) {
+	catalog := termcolor.NewCatalog(color.RGBA{R: 255, G: 255, B: 255, A: 255}, color.RGBA{A: 255})
+	runs := []TextRun{{Text: "text  ", StartCol: 3, EndCol: 9}}
+
+	got := cleanRuns(runs, catalog)
+	if got[0].Text != "text" || got[0].EndCol != 7 {
+		t.Fatalf("cleanRuns() = %#v, want trimmed run ending at column 7", got)
+	}
+}
+
+func TestTextRunsEqual_IncludesEndCol(t *testing.T) {
+	a := TextRun{Text: "same", StartCol: 3, EndCol: 7}
+	b := a
+	b.EndCol = 8
+
+	if textRunsEqual(&a, &b) {
+		t.Fatal("textRunsEqual() ignored EndCol")
+	}
+}
+
+func TestTextRun_ExplicitWideCellExtent(t *testing.T) {
+	run := TextRun{Text: "界", StartCol: 3, EndCol: 5}
+	if got, want := run.EndCol-run.StartCol, 2; got != want {
+		t.Errorf("cell extent = %d, want %d", got, want)
+	}
+}
+
 func TestAttrsEqual(t *testing.T) {
 	a := CellAttrs{FG: 1, BG: 2, Bold: true}
 	b := CellAttrs{FG: 1, BG: 2, Bold: true}

@@ -177,6 +177,7 @@ func (p *Processor) captureRow(
 				runs = append(runs, TextRun{
 					Text:     string(current.chars),
 					StartCol: current.startX,
+					EndCol:   x,
 					Attrs:    current.attrs,
 				})
 			}
@@ -194,6 +195,7 @@ func (p *Processor) captureRow(
 		runs = append(runs, TextRun{
 			Text:     string(current.chars),
 			StartCol: current.startX,
+			EndCol:   term.Width(),
 			Attrs:    current.attrs,
 		})
 	}
@@ -338,7 +340,9 @@ func cleanRuns(runs []TextRun, catalog *color.Catalog) []TextRun {
 	if n := len(cleaned); n > 0 {
 		last := &cleaned[n-1]
 		if catalog.IsDefault(last.Attrs.BG) && !last.Attrs.Underline {
-			last.Text = strings.TrimRight(last.Text, " ")
+			trimmed := strings.TrimRight(last.Text, " ")
+			last.EndCol -= len(last.Text) - len(trimmed)
+			last.Text = trimmed
 			if last.Text == "" {
 				cleaned = cleaned[:n-1]
 			}
@@ -431,5 +435,6 @@ func rowsEqual(a, b *Row) bool {
 func textRunsEqual(a, b *TextRun) bool {
 	return a.Text == b.Text &&
 		a.StartCol == b.StartCol &&
+		a.EndCol == b.EndCol &&
 		a.Attrs == b.Attrs
 }
