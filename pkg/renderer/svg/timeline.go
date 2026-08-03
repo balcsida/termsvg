@@ -10,8 +10,6 @@ import (
 	"github.com/mrmarble/termsvg/pkg/ir"
 )
 
-const maxTimelinePrecision = 12
-
 type timelinePoint[T any] struct {
 	time  time.Duration
 	state T
@@ -26,6 +24,8 @@ type keyframePoint[T any] struct {
 	selector string
 	state    T
 }
+
+const maxTimelinePrecision = 12
 
 func normalizeTimeline[T any](duration time.Duration, points []timelinePoint[T], equal func(T, T) bool) timeline[T] {
 	if len(points) == 0 {
@@ -112,14 +112,16 @@ func (t timeline[T]) keyframes(equal ...func(T, T) bool) []keyframePoint[T] {
 func (t timeline[T]) keyframesAtPrecision(precision int) []keyframePoint[T] {
 	frames := make([]keyframePoint[T], len(t.points))
 	for i, point := range t.points {
-		selector := ""
+		var selector string
+		//nolint:exhaustive // all non-boundary durations use the percentage case.
 		switch point.time {
 		case 0:
 			selector = "0%"
 		case t.duration:
 			selector = "100%"
 		default:
-			selector = strings.TrimRight(strings.TrimRight(strconv.FormatFloat(float64(point.time)*100/float64(t.duration), 'f', precision, 64), "0"), ".") + "%"
+			selector = strings.TrimRight(strings.TrimRight(
+				strconv.FormatFloat(float64(point.time)*100/float64(t.duration), 'f', precision, 64), "0"), ".") + "%"
 		}
 		frames[i] = keyframePoint[T]{selector: selector, state: point.state}
 	}
@@ -137,11 +139,14 @@ func animationDuration(duration time.Duration) string {
 
 func decimalDuration(duration, unit time.Duration, suffix string) string {
 	prefix := ""
+	//nolint:gosec // duration is converted as unsigned magnitude below.
 	value := uint64(duration)
 	if duration < 0 {
 		prefix = "-"
+		//nolint:gosec // avoids overflow when duration is the minimum int64.
 		value = uint64(-(duration + 1)) + 1
 	}
+	//nolint:gosec // time.Duration units are positive.
 	whole, fraction := value/uint64(unit), value%uint64(unit)
 	if fraction == 0 {
 		return prefix + strconv.FormatUint(whole, 10) + suffix

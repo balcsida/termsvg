@@ -20,6 +20,13 @@ import (
 	msvg "github.com/tdewolff/minify/v2/svg"
 )
 
+type countingWriter struct {
+	bytes.Buffer
+	writes int
+}
+
+type failingWriter struct{}
+
 func TestNew(t *testing.T) {
 	config := renderer.DefaultConfig()
 	r := New(config)
@@ -55,17 +62,10 @@ func TestRender_EmptyRecording(t *testing.T) {
 	}
 }
 
-type countingWriter struct {
-	bytes.Buffer
-	writes int
-}
-
 func (w *countingWriter) Write(p []byte) (int, error) {
 	w.writes++
 	return w.Buffer.Write(p)
 }
-
-type failingWriter struct{}
 
 func (failingWriter) Write([]byte) (int, error) {
 	return 0, errors.New("write failed")
@@ -203,7 +203,9 @@ func TestRender_UsesCompactStepEndTimelines(t *testing.T) {
 	svg := buf.String()
 	for _, want := range []string{
 		`@keyframes k{0%{transform:translateX(0px)}50%{transform:translateX(-960px)}100%{transform:translateX(-960px)}}`,
-		`@keyframes cursor{0%{transform:translate(0px,0px);visibility:visible}50%{transform:translate(12px,0px);visibility:visible}100%{transform:translate(12px,0px);visibility:visible}}`,
+		`@keyframes cursor{0%{transform:translate(0px,0px);visibility:visible}` +
+			`50%{transform:translate(12px,0px);visibility:visible}` +
+			`100%{transform:translate(12px,0px);visibility:visible}}`,
 		`animation:k 2s infinite step-end`,
 		`animation:cursor 2s infinite step-end`,
 	} {
@@ -340,6 +342,7 @@ func TestRender_TextAttributes(t *testing.T) {
 	}
 }
 
+//nolint:funlen // recording setup and assertions are clearer together.
 func TestRender_BackgroundRectangles(t *testing.T) {
 	config := renderer.DefaultConfig()
 	r := New(config)
@@ -409,7 +412,9 @@ func TestRender_BackgroundUsesRuneCountWhenEndColUnset(t *testing.T) {
 	rec := createTestRecording()
 	palette := termcolor.Standard()
 	bgID := rec.Colors.Register(termcolor.FromRGB(0, 0, 255), &palette)
-	rec.Frames = []ir.Frame{{Rows: []ir.Row{{Y: 0, Runs: []ir.TextRun{{Text: "界", StartCol: 2, Attrs: ir.CellAttrs{BG: bgID}}}}}}}
+	rec.Frames = []ir.Frame{{Rows: []ir.Row{{
+		Y: 0, Runs: []ir.TextRun{{Text: "界", StartCol: 2, Attrs: ir.CellAttrs{BG: bgID}}},
+	}}}}
 
 	var buf bytes.Buffer
 	if err := New(renderer.DefaultConfig()).Render(context.Background(), rec, &buf); err != nil {
@@ -501,6 +506,7 @@ func TestRender_HTMLEscaping(t *testing.T) {
 	}
 }
 
+//nolint:funlen,gocognit // normal and minified output share the same regression assertions.
 func TestRender_HoistsTextWhitespaceAndEscapesTextNodes(t *testing.T) {
 	const inlineText = "  inline middle  "
 	rec := createTestRecording()
@@ -544,7 +550,8 @@ func TestRender_HoistsTextWhitespaceAndEscapesTextNodes(t *testing.T) {
 				}
 				svg = strings.ReplaceAll(output.String(), "\u00a0", " ")
 			}
-			if !isMinified && (strings.Count(svg, `xml:space="preserve"`) != 1 || !strings.Contains(svg, `<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve"`)) {
+			if !isMinified && (strings.Count(svg, `xml:space="preserve"`) != 1 ||
+				!strings.Contains(svg, `<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve"`)) {
 				t.Fatalf("xml:space was not inherited from the root SVG: %s", svg)
 			}
 			if !strings.Contains(svg, `<text x="24" y="20" class="underline">  static  </text>`) ||
@@ -552,7 +559,8 @@ func TestRender_HoistsTextWhitespaceAndEscapesTextNodes(t *testing.T) {
 				!strings.Contains(svg, `<use href="#r0"/>`) {
 				t.Fatalf("space-preserving static or reused text missing: %s", svg)
 			}
-			if !strings.Contains(svg, `<text x="60" y="70">&lt;safe`) || strings.Contains(svg, `<safe>`) || strings.Contains(svg, `&#34;`) || strings.Contains(svg, `&#39;`) {
+			if !strings.Contains(svg, `<text x="60" y="70">&lt;safe`) || strings.Contains(svg, `<safe>`) ||
+				strings.Contains(svg, `&#34;`) || strings.Contains(svg, `&#39;`) {
 				t.Fatalf("text-node escaping changed quotes or missed XML escapes: %s", svg)
 			}
 			if !isMinified && !strings.Contains(svg, `&lt;safe&gt;&amp;"'`) {
@@ -915,7 +923,8 @@ func TestCollectRows_InlinesAtExactByteCost(t *testing.T) {
 	_, states := c.contentKeyframes()
 	frames, defs := c.collectRows(states)
 	if len(frames) != 3 || frames[0][0].id != "" || len(defs) != 0 {
-		t.Fatalf("row at exact definition cost was reused: markup=%d id=%q defs=%d", len(frames[0][0].svg), frames[0][0].id, len(defs))
+		t.Fatalf("row at exact definition cost was reused: markup=%d id=%q defs=%d",
+			len(frames[0][0].svg), frames[0][0].id, len(defs))
 	}
 }
 
@@ -924,7 +933,8 @@ func TestCollectRows_AccountsForR10IDLength(t *testing.T) {
 	rec.Frames = make([]ir.Frame, 3)
 	for _, i := range []int{0, 2} {
 		for j := range 10 {
-			rec.Frames[i].Rows = append(rec.Frames[i].Rows, ir.Row{Y: j, Runs: []ir.TextRun{{Text: strings.Repeat(string(rune('a'+j)), 96)}}})
+			rec.Frames[i].Rows = append(rec.Frames[i].Rows,
+				ir.Row{Y: j, Runs: []ir.TextRun{{Text: strings.Repeat(string(rune('a'+j)), 96)}}})
 		}
 		rec.Frames[i].Rows = append(rec.Frames[i].Rows, ir.Row{Y: 10, Runs: []ir.TextRun{{Text: strings.Repeat("x", 4)}}})
 	}
@@ -941,7 +951,8 @@ func TestCollectRows_AccountsForR10IDLength(t *testing.T) {
 	_, states := c.contentKeyframes()
 	frames, defs := c.collectRows(states)
 	if len(defs) != 10 || frames[0][9].id != "r9" || frames[0][10].id != "" {
-		t.Fatalf("r10-length row was reused without a byte saving: markup=%d id=%q defs=%d", len(frames[0][10].svg), frames[0][10].id, len(defs))
+		t.Fatalf("r10-length row was reused without a byte saving: markup=%d id=%q defs=%d",
+			len(frames[0][10].svg), frames[0][10].id, len(defs))
 	}
 }
 
@@ -1078,7 +1089,9 @@ func TestRender_OmitsAnimationsForStaticAndDisabledCursor(t *testing.T) {
 		t.Fatalf("Render() error = %v", err)
 	}
 	svg := buf.String()
-	for _, forbidden := range []string{"@keyframes k", "animation:k", "@keyframes blink", `.cursor{`, `<rect class="cursor"`} {
+	for _, forbidden := range []string{
+		"@keyframes k", "animation:k", "@keyframes blink", `.cursor{`, `<rect class="cursor"`,
+	} {
 		if strings.Contains(svg, forbidden) {
 			t.Errorf("static SVG contains %q", forbidden)
 		}
@@ -1096,7 +1109,8 @@ func TestRender_ZeroDurationUsesFinalContentState(t *testing.T) {
 		t.Fatalf("Render() error = %v", err)
 	}
 	svg := buf.String()
-	if strings.Contains(svg, ">first</text>") || !strings.Contains(svg, ">final</text>") || strings.Contains(svg, "animation:k") {
+	if strings.Contains(svg, ">first</text>") || !strings.Contains(svg, ">final</text>") ||
+		strings.Contains(svg, "animation:k") {
 		t.Fatalf("zero-duration content output = %q", svg)
 	}
 }

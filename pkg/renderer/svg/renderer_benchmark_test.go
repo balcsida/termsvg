@@ -90,7 +90,9 @@ func colorFrames() *ir.Recording {
 	for i := range rows {
 		fg := rec.Colors.Register(termcolor.FromRGB(uint8(i*15), uint8(255-i*12), uint8(i*7)), &palette)
 		bg := rec.Colors.Register(termcolor.FromRGB(uint8(255-i*9), uint8(i*13), uint8(128+i)), &palette)
-		rows[i] = ir.Row{Y: i, Runs: []ir.TextRun{{Text: fmt.Sprintf("color %02d", i), EndCol: 8, Attrs: ir.CellAttrs{FG: fg, BG: bg}}}}
+		rows[i] = ir.Row{Y: i, Runs: []ir.TextRun{{
+			Text: fmt.Sprintf("color %02d", i), EndCol: 8, Attrs: ir.CellAttrs{FG: fg, BG: bg},
+		}}}
 	}
 	rec.Frames = []ir.Frame{{Rows: rows}}
 	rec.Duration = time.Second

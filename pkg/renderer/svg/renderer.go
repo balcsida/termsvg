@@ -15,8 +15,6 @@ import (
 	"github.com/mrmarble/termsvg/pkg/renderer"
 )
 
-var svgTextEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
-
 // Renderer implements the renderer.Renderer interface for SVG output.
 type Renderer struct {
 	config renderer.Config
@@ -60,6 +58,8 @@ const (
 	// windowButtonRadius is the radius of window control buttons.
 	windowButtonRadius = 6
 )
+
+var svgTextEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
 
 // New creates a new SVG renderer with the given configuration.
 func New(config *renderer.Config) *Renderer {
@@ -267,13 +267,16 @@ func (c *canvas) contentKeyframes() ([]keyframePoint[int], [][]ir.Row) {
 	return out, states
 }
 
-func (c *canvas) collectRows(contentStates [][]ir.Row) ([][]*renderedRow, []*renderedRow) {
+func (c *canvas) collectRows(contentStates [][]ir.Row) (frames [][]*renderedRow, defs []*renderedRow) {
 	return c.collectRowsWithHash(contentStates, semanticRowHash)
 }
 
-func (c *canvas) collectRowsWithHash(contentStates [][]ir.Row, hash func(ir.Row) uint64) ([][]*renderedRow, []*renderedRow) {
+func (c *canvas) collectRowsWithHash(
+	contentStates [][]ir.Row,
+	hash func(ir.Row) uint64,
+) (frames [][]*renderedRow, defs []*renderedRow) {
 	seen := make(map[uint64][]*renderedRow)
-	frames := make([][]*renderedRow, len(contentStates))
+	frames = make([][]*renderedRow, len(contentStates))
 	ordered := make([]*renderedRow, 0)
 
 	for i, rows := range contentStates {
@@ -296,7 +299,7 @@ func (c *canvas) collectRowsWithHash(contentStates [][]ir.Row, hash func(ir.Row)
 		}
 	}
 
-	defs := make([]*renderedRow, 0)
+	defs = make([]*renderedRow, 0)
 	for _, entry := range ordered {
 		var sb strings.Builder
 		c.writeRow(&sb, entry.row)
@@ -321,6 +324,7 @@ func semanticRowHash(row ir.Row) uint64 {
 	)
 	h := uint64(offset)
 	addInt := func(value int) {
+		//nolint:gosec // convert signed values to stable two's-complement hash bytes.
 		v := uint64(value)
 		for range 8 {
 			h = (h ^ uint64(byte(v))) * prime

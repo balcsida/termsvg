@@ -134,7 +134,7 @@ func writeOutputFile(
 	return errors.Join(writeOutput(ctx, rdr, rec, dst, minifySVG), dst.Close())
 }
 
-//nolint:funlen,gocognit // sequential export steps are clearer in one function
+//nolint:funlen // sequential export steps are clearer in one function
 func (cmd *Cmd) Run() error {
 	format := strings.ToLower(cmd.Format)
 

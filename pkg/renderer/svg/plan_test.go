@@ -53,7 +53,8 @@ func TestBuildRenderPlanHoistsOnlyRowsStaticAcrossMissingStates(t *testing.T) {
 	if !reflect.DeepEqual(plan.staticRows, []ir.Row{static}) {
 		t.Fatalf("static rows = %#v, want %#v", plan.staticRows, []ir.Row{static})
 	}
-	if len(plan.content.points) != 2 || len(plan.content.points[0].state) != 0 || !reflect.DeepEqual(plan.content.points[1].state, []ir.Row{dynamic}) {
+	if len(plan.content.points) != 2 || len(plan.content.points[0].state) != 0 ||
+		!reflect.DeepEqual(plan.content.points[1].state, []ir.Row{dynamic}) {
 		t.Fatalf("dynamic frames = %#v", plan.content.points)
 	}
 	if plan.cursorEverVisible || len(plan.cursor.points) != 0 {

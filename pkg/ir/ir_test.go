@@ -157,6 +157,7 @@ func TestProcessor_IdleTimeCap(t *testing.T) {
 	}
 }
 
+//nolint:funlen // table cases keep idle-time edge conditions together.
 func TestProcessor_PreprocessEventsIdleTimeCap(t *testing.T) {
 	tests := []struct {
 		name   string

@@ -14,6 +14,29 @@ import (
 
 type rendererFunc func(io.Writer) error
 
+type writeResult struct {
+	n   int
+	err error
+}
+
+type scriptedWriter struct {
+	writes []writeResult
+	output bytes.Buffer
+}
+
+type errorWriter struct{ err error }
+
+type countingErrorWriter struct {
+	err    error
+	writes int
+}
+
+type closeErrorWriter struct {
+	bytes.Buffer
+	err    error
+	closed bool
+}
+
 func (f rendererFunc) Render(_ context.Context, _ *ir.Recording, w io.Writer) error {
 	return f(w)
 }
@@ -62,7 +85,8 @@ func TestNBSPWriterHandlesSplitSequence(t *testing.T) {
 func TestWriteOutputPropagatesDestinationError(t *testing.T) {
 	wantErr := errors.New("destination failed")
 	rdr := rendererFunc(func(w io.Writer) error {
-		_, err := io.WriteString(w, `<svg xmlns="http://www.w3.org/2000/svg"><text>`+strings.Repeat("x", 8192)+`</text></svg>`)
+		_, err := io.WriteString(w,
+			`<svg xmlns="http://www.w3.org/2000/svg"><text>`+strings.Repeat("x", 8192)+`</text></svg>`)
 		return err
 	})
 
@@ -238,16 +262,6 @@ func TestNBSPWriterCountsCompletedPendingByteOnError(t *testing.T) {
 	}
 }
 
-type writeResult struct {
-	n   int
-	err error
-}
-
-type scriptedWriter struct {
-	writes []writeResult
-	output bytes.Buffer
-}
-
 func (w *scriptedWriter) Write(p []byte) (int, error) {
 	if len(w.writes) == 0 {
 		return w.output.Write(p)
@@ -326,24 +340,11 @@ func TestWriteOutputFileJoinsRenderAndCloseErrors(t *testing.T) {
 	}
 }
 
-type errorWriter struct{ err error }
-
 func (w errorWriter) Write([]byte) (int, error) { return 0, w.err }
-
-type countingErrorWriter struct {
-	err    error
-	writes int
-}
 
 func (w *countingErrorWriter) Write([]byte) (int, error) {
 	w.writes++
 	return 0, w.err
-}
-
-type closeErrorWriter struct {
-	bytes.Buffer
-	err    error
-	closed bool
 }
 
 func (w *closeErrorWriter) Close() error {
