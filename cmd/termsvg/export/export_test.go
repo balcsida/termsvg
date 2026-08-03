@@ -106,10 +106,158 @@ func TestWriteOutputStreamsLargeSVG(t *testing.T) {
 }
 
 func TestNBSPWriterPropagatesShortWrite(t *testing.T) {
-	w := newNBSPWriter(shortWriter{})
+	dst := &scriptedWriter{writes: []writeResult{{0, nil}, {1, nil}}}
+	w := newNBSPWriter(dst)
 
-	if _, err := w.Write([]byte("x")); !errors.Is(err, io.ErrShortWrite) {
-		t.Fatalf("Write() error = %v, want %v", err, io.ErrShortWrite)
+	if n, err := w.Write([]byte("x")); n != 0 || !errors.Is(err, io.ErrShortWrite) {
+		t.Fatalf("Write() = (%d, %v), want (0, %v)", n, err, io.ErrShortWrite)
+	}
+	if n, err := w.Write([]byte("x")); n != 1 || err != nil {
+		t.Fatalf("retry Write() = (%d, %v), want (1, nil)", n, err)
+	}
+	if got := dst.output.String(); got != "x" {
+		t.Fatalf("output = %q, want %q", got, "x")
+	}
+}
+
+func TestNBSPWriterCountsPartiallyWrittenInput(t *testing.T) {
+	wantErr := errors.New("write failed")
+	dst := &scriptedWriter{writes: []writeResult{{1, wantErr}, {1, nil}}}
+	w := newNBSPWriter(dst)
+
+	if n, err := w.Write([]byte("ab")); n != 1 || !errors.Is(err, wantErr) {
+		t.Fatalf("Write() = (%d, %v), want (1, %v)", n, err, wantErr)
+	}
+	if n, err := w.Write([]byte("b")); n != 1 || err != nil {
+		t.Fatalf("retry Write() = (%d, %v), want (1, nil)", n, err)
+	}
+	if got := dst.output.String(); got != "ab" {
+		t.Fatalf("output = %q, want %q", got, "ab")
+	}
+}
+
+func TestNBSPWriterDoesNotDuplicateCompletedSplitSequence(t *testing.T) {
+	wantErr := errors.New("write failed")
+	dst := &scriptedWriter{writes: []writeResult{{1, wantErr}}}
+	w := newNBSPWriter(dst)
+
+	if n, err := w.Write([]byte{0xc2}); n != 1 || err != nil {
+		t.Fatalf("first Write() = (%d, %v), want (1, nil)", n, err)
+	}
+	if n, err := w.Write([]byte{0xa0}); n != 1 || !errors.Is(err, wantErr) {
+		t.Fatalf("second Write() = (%d, %v), want (1, %v)", n, err, wantErr)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if got := dst.output.String(); got != " " {
+		t.Fatalf("output = %q, want one space", got)
+	}
+}
+
+func TestNBSPWriterRetriesPendingC2WithoutLosingNextByte(t *testing.T) {
+	wantErr := errors.New("write failed")
+	dst := &scriptedWriter{writes: []writeResult{{1, wantErr}, {1, nil}}}
+	w := newNBSPWriter(dst)
+
+	if n, err := w.Write([]byte{0xc2}); n != 1 || err != nil {
+		t.Fatalf("first Write() = (%d, %v), want (1, nil)", n, err)
+	}
+	if n, err := w.Write([]byte{'x'}); n != 0 || !errors.Is(err, wantErr) {
+		t.Fatalf("second Write() = (%d, %v), want (0, %v)", n, err, wantErr)
+	}
+	if n, err := w.Write([]byte{'x'}); n != 1 || err != nil {
+		t.Fatalf("retry Write() = (%d, %v), want (1, nil)", n, err)
+	}
+	if got := dst.output.String(); got != "\xc2x" {
+		t.Fatalf("output = %q, want %q", got, "\xc2x")
+	}
+}
+
+func TestNBSPWriterRetriesPendingC2OnClose(t *testing.T) {
+	wantErr := errors.New("write failed")
+	dst := &scriptedWriter{writes: []writeResult{{0, wantErr}, {1, nil}}}
+	w := newNBSPWriter(dst)
+
+	if n, err := w.Write([]byte{0xc2}); n != 1 || err != nil {
+		t.Fatalf("Write() = (%d, %v), want (1, nil)", n, err)
+	}
+	if err := w.Close(); !errors.Is(err, wantErr) {
+		t.Fatalf("Close() error = %v, want %v", err, wantErr)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("retry Close() error = %v", err)
+	}
+	if got := dst.output.String(); got != "\xc2" {
+		t.Fatalf("output = %q, want %q", got, "\xc2")
+	}
+}
+
+func TestNBSPWriterPreservesStandaloneA0(t *testing.T) {
+	var dst bytes.Buffer
+	w := newNBSPWriter(&dst)
+
+	if n, err := w.Write([]byte{0xa0}); n != 1 || err != nil {
+		t.Fatalf("Write() = (%d, %v), want (1, nil)", n, err)
+	}
+	if got := dst.Bytes(); !bytes.Equal(got, []byte{0xa0}) {
+		t.Fatalf("output = %x, want a0", got)
+	}
+}
+
+func TestNBSPWriterCountsCompletedPendingByteOnError(t *testing.T) {
+	wantErr := errors.New("write failed")
+	dst := &scriptedWriter{writes: []writeResult{{1, wantErr}}}
+	w := newNBSPWriter(dst)
+
+	if n, err := w.Write([]byte{0xc2, 'x'}); n != 1 || !errors.Is(err, wantErr) {
+		t.Fatalf("Write() = (%d, %v), want (1, %v)", n, err, wantErr)
+	}
+	if n, err := w.Write([]byte{'x'}); n != 1 || err != nil {
+		t.Fatalf("retry Write() = (%d, %v), want (1, nil)", n, err)
+	}
+	if got := dst.output.String(); got != "\xc2x" {
+		t.Fatalf("output = %q, want %q", got, "\xc2x")
+	}
+}
+
+type writeResult struct {
+	n   int
+	err error
+}
+
+type scriptedWriter struct {
+	writes []writeResult
+	output bytes.Buffer
+}
+
+func (w *scriptedWriter) Write(p []byte) (int, error) {
+	if len(w.writes) == 0 {
+		return w.output.Write(p)
+	}
+	result := w.writes[0]
+	w.writes = w.writes[1:]
+	if result.n > len(p) {
+		result.n = len(p)
+	}
+	_, _ = w.output.Write(p[:result.n])
+	return result.n, result.err
+}
+
+func TestNBSPWriterCloseCountsCompletedByteOnError(t *testing.T) {
+	wantErr := errors.New("write failed")
+	dst := &scriptedWriter{writes: []writeResult{{1, wantErr}}}
+	w := newNBSPWriter(dst)
+
+	_, _ = w.Write([]byte{0xc2})
+	if err := w.Close(); !errors.Is(err, wantErr) {
+		t.Fatalf("Close() error = %v, want %v", err, wantErr)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("retry Close() error = %v", err)
+	}
+	if got := dst.output.String(); got != "\xc2" {
+		t.Fatalf("output = %q, want %q", got, "\xc2")
 	}
 }
 
@@ -132,7 +280,3 @@ func TestWriteOutputLeavesNonMinifiedBytesUnchanged(t *testing.T) {
 type errorWriter struct{ err error }
 
 func (w errorWriter) Write([]byte) (int, error) { return 0, w.err }
-
-type shortWriter struct{}
-
-func (shortWriter) Write([]byte) (int, error) { return 0, nil }

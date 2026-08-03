@@ -47,45 +47,60 @@ type nbspWriter struct {
 func newNBSPWriter(w io.Writer) *nbspWriter { return &nbspWriter{w: w} }
 
 func (w *nbspWriter) Write(p []byte) (int, error) {
-	for i, b := range p {
+	accepted := 0
+	for _, b := range p {
 		if w.pending {
+			out := byte(0xc2)
 			if b == 0xa0 {
-				if err := w.writeByte(' '); err != nil {
-					return i, err
-				}
+				out = ' '
+			}
+			written, err := w.writeByte(out)
+			if written {
 				w.pending = false
+				if b == 0xa0 {
+					accepted++
+				}
+			}
+			if err != nil {
+				return accepted, err
+			}
+			if b == 0xa0 {
 				continue
 			}
-			if err := w.writeByte(0xc2); err != nil {
-				return i, err
-			}
-			w.pending = false
 		}
 		if b == 0xc2 {
 			w.pending = true
+			accepted++
 			continue
 		}
-		if err := w.writeByte(b); err != nil {
-			return i, err
+		written, err := w.writeByte(b)
+		if written {
+			accepted++
+		}
+		if err != nil {
+			return accepted, err
 		}
 	}
-	return len(p), nil
+	return accepted, nil
 }
 
-func (w *nbspWriter) writeByte(b byte) error {
+func (w *nbspWriter) writeByte(b byte) (bool, error) {
 	n, err := w.w.Write([]byte{b})
 	if err == nil && n != 1 {
-		return io.ErrShortWrite
+		err = io.ErrShortWrite
 	}
-	return err
+	return n == 1, err
 }
 
 func (w *nbspWriter) Close() error {
 	if !w.pending {
 		return nil
 	}
-	w.pending = false
-	return w.writeByte(0xc2)
+	written, err := w.writeByte(0xc2)
+	if written {
+		w.pending = false
+	}
+	return err
 }
 
 func writeOutput(
