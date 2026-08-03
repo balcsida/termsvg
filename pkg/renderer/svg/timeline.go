@@ -32,9 +32,6 @@ func normalizeTimeline[T any](duration time.Duration, points []timelinePoint[T],
 		return timeline[T]{duration: duration}
 	}
 	points = append([]timelinePoint[T](nil), points...)
-	for i := range points {
-		points[i].time = max(0, min(points[i].time, duration))
-	}
 	slices.SortStableFunc(points, func(a, b timelinePoint[T]) int {
 		if a.time < b.time {
 			return -1
@@ -44,6 +41,9 @@ func normalizeTimeline[T any](duration time.Duration, points []timelinePoint[T],
 		}
 		return 0
 	})
+	for i := range points {
+		points[i].time = max(0, min(points[i].time, duration))
+	}
 
 	out := points[:0]
 	for _, point := range points {

@@ -58,6 +58,22 @@ func TestNormalizeTimelineClampsPointsToEndpoints(t *testing.T) {
 	}
 }
 
+func TestNormalizeTimelineClampsAfterOrderingOriginalTimes(t *testing.T) {
+	got := normalizeTimeline(2*time.Second, []timelinePoint[string]{
+		{time: 4 * time.Second, state: "end"},
+		{time: 3 * time.Second, state: "old"},
+		{time: -3 * time.Second, state: "start"},
+		{time: -4 * time.Second, state: "older"},
+	}, func(a, b string) bool { return a == b })
+	want := timeline[string]{duration: 2 * time.Second, points: []timelinePoint[string]{
+		{state: "start"},
+		{time: 2 * time.Second, state: "end"},
+	}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("timeline = %#v, want %#v", got, want)
+	}
+}
+
 func TestNormalizeTimelineMakesStaticAndZeroDurationTimelinesStatic(t *testing.T) {
 	for _, tt := range []struct {
 		name     string
