@@ -712,7 +712,7 @@ func TestRender_ReusesProfitableRows(t *testing.T) {
 	row := ir.Row{Y: 0, Runs: []ir.TextRun{{Text: "ROW:" + strings.Repeat("x", 96)}}}
 	rec.Frames = []ir.Frame{
 		{Time: 0, Rows: []ir.Row{row}},
-		{Time: 500 * time.Millisecond, Rows: []ir.Row{row}},
+		{Time: 500 * time.Millisecond, Rows: []ir.Row{{Y: 0, Runs: []ir.TextRun{{Text: "different"}}}}},
 		{Time: time.Second, Rows: []ir.Row{row}},
 	}
 	rec.Duration = time.Second
@@ -725,15 +725,19 @@ func TestRender_ReusesProfitableRows(t *testing.T) {
 	if strings.Count(svg, "ROW:") != 1 {
 		t.Fatalf("repeated row serialized %d times, want 1", strings.Count(svg, "ROW:"))
 	}
-	if strings.Count(svg, `<use href="#r0"/>`) != 3 {
-		t.Fatalf("row references = %d, want 3", strings.Count(svg, `<use href="#r0"/>`))
+	if strings.Count(svg, `<use href="#r0"/>`) != 2 {
+		t.Fatalf("row references = %d, want 2", strings.Count(svg, `<use href="#r0"/>`))
 	}
 }
 
 func TestRender_InlinesUnprofitableRows(t *testing.T) {
 	rec := createTestRecording()
 	row := ir.Row{Y: 0, Runs: []ir.TextRun{{Text: "x"}}}
-	rec.Frames = []ir.Frame{{Rows: []ir.Row{row}}, {Time: time.Second, Rows: []ir.Row{row}}}
+	rec.Frames = []ir.Frame{
+		{Rows: []ir.Row{row}},
+		{Time: 500 * time.Millisecond, Rows: []ir.Row{{Y: 0, Runs: []ir.TextRun{{Text: "y"}}}}},
+		{Time: time.Second, Rows: []ir.Row{row}},
+	}
 	rec.Duration = time.Second
 
 	var buf bytes.Buffer
@@ -748,27 +752,36 @@ func TestRender_InlinesUnprofitableRows(t *testing.T) {
 func TestCollectRows_InlinesAtExactByteCost(t *testing.T) {
 	rec := createTestRecording()
 	row := ir.Row{Y: 0, Runs: []ir.TextRun{{Text: strings.Repeat("x", 2)}}}
-	rec.Frames = []ir.Frame{{Rows: []ir.Row{row}}, {Rows: []ir.Row{row}}}
+	rec.Frames = []ir.Frame{
+		{Rows: []ir.Row{row}},
+		{Time: time.Second, Rows: []ir.Row{{Y: 0, Runs: []ir.TextRun{{Text: "different"}}}}},
+		{Time: 2 * time.Second, Rows: []ir.Row{row}},
+	}
 	c := &canvas{rec: rec, config: *renderer.DefaultConfig()}
 
-	frames, defs := c.collectRows()
-	if len(frames) != 2 || frames[0][0].id != "" || len(defs) != 0 {
+	frames, defs := c.collectRows(buildRenderPlan(rec, false).contentFrames)
+	if len(frames) != 3 || frames[0][0].id != "" || len(defs) != 0 {
 		t.Fatalf("row at exact definition cost was reused: markup=%d id=%q defs=%d", len(frames[0][0].svg), frames[0][0].id, len(defs))
 	}
 }
 
 func TestCollectRows_AccountsForR10IDLength(t *testing.T) {
 	rec := createTestRecording()
-	rec.Frames = make([]ir.Frame, 2)
-	for i := range 2 {
+	rec.Frames = make([]ir.Frame, 3)
+	for _, i := range []int{0, 2} {
 		for j := range 10 {
 			rec.Frames[i].Rows = append(rec.Frames[i].Rows, ir.Row{Y: j, Runs: []ir.TextRun{{Text: strings.Repeat(string(rune('a'+j)), 96)}}})
 		}
 		rec.Frames[i].Rows = append(rec.Frames[i].Rows, ir.Row{Y: 10, Runs: []ir.TextRun{{Text: strings.Repeat("x", 4)}}})
 	}
+	for j := range 11 {
+		rec.Frames[1].Rows = append(rec.Frames[1].Rows, ir.Row{Y: j, Runs: []ir.TextRun{{Text: "different"}}})
+	}
+	rec.Frames[1].Time = time.Second
+	rec.Frames[2].Time = 2 * time.Second
 	c := &canvas{rec: rec, config: *renderer.DefaultConfig()}
 
-	frames, defs := c.collectRows()
+	frames, defs := c.collectRows(buildRenderPlan(rec, false).contentFrames)
 	if len(defs) != 10 || frames[0][9].id != "r9" || frames[0][10].id != "" {
 		t.Fatalf("r10-length row was reused without a byte saving: markup=%d id=%q defs=%d", len(frames[0][10].svg), frames[0][10].id, len(defs))
 	}
@@ -803,12 +816,111 @@ func TestRender_PreservesCursorAndTiming(t *testing.T) {
 	svg := buf.String()
 	for _, want := range []string{
 		`0.000%{transform:translateX(0px)}`,
-		`50.000%{transform:translateX(-1000px)}`,
-		`<rect class="cursor" x="24" y="25" width="12" height="25"/>`,
-		`<rect class="cursor" x="48" y="25" width="12" height="25"/>`,
+		`50.000%{transform:translateX(-960px)}`,
+		`0.000%{transform:translate(24px,25px);visibility:visible}`,
+		`50.000%{transform:translate(48px,25px);visibility:visible}`,
+		`<rect class="cursor" width="12" height="25"/>`,
 	} {
 		if !strings.Contains(svg, want) {
 			t.Errorf("SVG missing preserved frame state %q", want)
 		}
 	}
+}
+
+func TestRender_UsesIndependentContentAndCursorLayers(t *testing.T) {
+	rec := createTestRecording()
+	rec.Width = 10
+	rec.Frames[0].Rows = []ir.Row{
+		{Y: 0, Runs: []ir.TextRun{{Text: "static"}}},
+		{Y: 1, Runs: []ir.TextRun{{Text: "A"}}},
+	}
+	rec.Frames[1].Rows = []ir.Row{
+		{Y: 0, Runs: []ir.TextRun{{Text: "static"}}},
+		{Y: 1, Runs: []ir.TextRun{{Text: "B"}}},
+	}
+	rec.Frames[0].Cursor = ir.Cursor{Col: 1, Visible: true}
+	rec.Frames[1].Cursor = ir.Cursor{Col: 2, Visible: true}
+
+	var buf bytes.Buffer
+	if err := New(renderer.DefaultConfig()).Render(context.Background(), rec, &buf); err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	svg := buf.String()
+	if strings.Count(svg, `<rect class="cursor"`) != 1 {
+		t.Fatalf("cursor rectangles = %d, want 1", strings.Count(svg, `<rect class="cursor"`))
+	}
+	if strings.Count(svg, ">static</text>") != 1 {
+		t.Fatalf("static row copies = %d, want 1", strings.Count(svg, ">static</text>"))
+	}
+	if !strings.Contains(svg, `translateX(-120px)`) || strings.Contains(svg, `translateX(-160px)`) {
+		t.Fatal("content strip did not use the 120px content width")
+	}
+	staticAt := strings.Index(svg, ">static</text>")
+	dynamicAt := strings.Index(svg, ">A</text>")
+	cursorAt := strings.Index(svg, `<rect class="cursor"`)
+	if staticAt < 0 || dynamicAt < staticAt || cursorAt < dynamicAt {
+		t.Fatalf("paint order static=%d dynamic=%d cursor=%d", staticAt, dynamicAt, cursorAt)
+	}
+}
+
+func TestRender_OmitsAnimationsForStaticAndDisabledCursor(t *testing.T) {
+	rec := createTestRecording()
+	rec.Duration = 0
+	rec.Frames = []ir.Frame{{Rows: rec.Frames[0].Rows, Cursor: ir.Cursor{Visible: true}}}
+	config := renderer.DefaultConfig()
+	config.ShowCursor = false
+
+	var buf bytes.Buffer
+	if err := New(config).Render(context.Background(), rec, &buf); err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	svg := buf.String()
+	for _, forbidden := range []string{"@keyframes k", "animation:k", "@keyframes blink", `.cursor{`, `<rect class="cursor"`} {
+		if strings.Contains(svg, forbidden) {
+			t.Errorf("static SVG contains %q", forbidden)
+		}
+	}
+}
+
+func TestRender_ZeroDurationUsesFinalContentState(t *testing.T) {
+	rec := createTestRecording()
+	rec.Duration = 0
+	rec.Frames[0].Rows = []ir.Row{{Y: 0, Runs: []ir.TextRun{{Text: "first"}}}}
+	rec.Frames[1].Rows = []ir.Row{{Y: 0, Runs: []ir.TextRun{{Text: "final"}}}}
+
+	var buf bytes.Buffer
+	if err := New(renderer.DefaultConfig()).Render(context.Background(), rec, &buf); err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	svg := buf.String()
+	if strings.Contains(svg, ">first</text>") || !strings.Contains(svg, ">final</text>") || strings.Contains(svg, "animation:k") {
+		t.Fatalf("zero-duration content output = %q", svg)
+	}
+}
+
+func TestRender_OmitsNeverVisibleCursorAndDoesNotAnimateStaticCursor(t *testing.T) {
+	t.Run("never visible", func(t *testing.T) {
+		rec := createTestRecording()
+		var buf bytes.Buffer
+		if err := New(renderer.DefaultConfig()).Render(context.Background(), rec, &buf); err != nil {
+			t.Fatalf("Render() error = %v", err)
+		}
+		if strings.Contains(buf.String(), `<rect class="cursor"`) || strings.Contains(buf.String(), "@keyframes blink") {
+			t.Fatal("never-visible cursor was serialized")
+		}
+	})
+
+	t.Run("static", func(t *testing.T) {
+		rec := createTestRecording()
+		for i := range rec.Frames {
+			rec.Frames[i].Cursor = ir.Cursor{Col: 2, Row: 1, Visible: true}
+		}
+		var buf bytes.Buffer
+		if err := New(renderer.DefaultConfig()).Render(context.Background(), rec, &buf); err != nil {
+			t.Fatalf("Render() error = %v", err)
+		}
+		if strings.Contains(buf.String(), "@keyframes cursor") {
+			t.Fatal("static cursor received position keyframes")
+		}
+	})
 }
