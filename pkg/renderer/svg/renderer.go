@@ -122,7 +122,8 @@ func (c *canvas) render(ctx context.Context) error {
 	default:
 	}
 
-	frameRows, rowDefs := c.collectRows(c.plan.contentFrames)
+	_, contentStates := c.contentKeyframes()
+	frameRows, rowDefs := c.collectRows(contentStates)
 
 	// SVG header
 	width := c.paddedWidth()
@@ -185,13 +186,13 @@ func (c *canvas) writeStyles() {
 	var sb strings.Builder
 	sb.WriteString("<style>")
 
-	if len(c.plan.contentFrames) > 1 && c.plan.duration > 0 {
+	if c.plan.content.animated() {
 		sb.WriteString(c.generateKeyframes())
 	}
-	if len(c.plan.cursor.points) > 1 && c.plan.duration > 0 {
+	if c.plan.cursor.animated() {
 		sb.WriteString(c.generateCursorKeyframes())
 	}
-	if c.plan.cursor.everVisible {
+	if c.plan.cursorEverVisible {
 		sb.WriteString("@keyframes blink{0%,50%{opacity:1}50.01%,100%{opacity:0}}")
 	}
 
@@ -200,7 +201,7 @@ func (c *canvas) writeStyles() {
 	fmt.Fprintf(&sb, "text{font-family:%s;font-size:%dpx;fill:%s;white-space:pre}",
 		c.config.FontFamily, c.config.FontSize, fgHex)
 
-	if c.plan.cursor.everVisible {
+	if c.plan.cursorEverVisible {
 		fmt.Fprintf(&sb, ".cursor{fill:%s;animation:blink 1s step-end infinite}", fgHex)
 	}
 
@@ -237,27 +238,39 @@ func (c *canvas) visibleColorIDs() []color.ID {
 func (c *canvas) generateKeyframes() string {
 	var sb strings.Builder
 	sb.WriteString("@keyframes k{")
-
-	duration := c.plan.duration.Seconds()
 	width := c.contentWidth()
-
-	for i, frame := range c.plan.contentFrames {
-		pct := frame.time.Seconds() / duration * 100
-		offset := -width * i
-		fmt.Fprintf(&sb, "%.3f%%{transform:translateX(%dpx)}", pct, offset)
+	frames, _ := c.contentKeyframes()
+	for _, frame := range frames {
+		fmt.Fprintf(&sb, "%s{transform:translateX(%dpx)}", frame.selector, -width*frame.state)
 	}
 
 	sb.WriteString("}")
 	return sb.String()
 }
 
-func (c *canvas) collectRows(contentFrames []contentFrame) ([][]*renderedRow, []*renderedRow) {
+func (c *canvas) contentKeyframes() ([]keyframePoint[int], [][]ir.Row) {
+	frames := c.plan.content.keyframes()
+	states := make([][]ir.Row, 0, len(frames))
+	out := make([]keyframePoint[int], len(frames))
+	for i, frame := range frames {
+		if len(states) == 0 || !rowsEqual(states[len(states)-1], frame.state) {
+			states = append(states, frame.state)
+		}
+		out[i] = keyframePoint[int]{selector: frame.selector, state: len(states) - 1}
+	}
+	if len(states) == 0 && len(c.plan.content.points) > 0 {
+		states = append(states, c.plan.content.points[len(c.plan.content.points)-1].state)
+	}
+	return out, states
+}
+
+func (c *canvas) collectRows(contentStates [][]ir.Row) ([][]*renderedRow, []*renderedRow) {
 	seen := make(map[string]*renderedRow)
-	frames := make([][]*renderedRow, len(contentFrames))
+	frames := make([][]*renderedRow, len(contentStates))
 	ordered := make([]*renderedRow, 0)
 
-	for i, frame := range contentFrames {
-		for _, row := range frame.rows {
+	for i, rows := range contentStates {
+		for _, row := range rows {
 			var sb strings.Builder
 			c.writeRow(&sb, row)
 			markup := sb.String()
@@ -294,13 +307,13 @@ func (c *canvas) writeRowDefs(defs []*renderedRow) {
 }
 
 func (c *canvas) writeFrames(frameRows [][]*renderedRow) {
-	animated := len(c.plan.contentFrames) > 1 && c.plan.duration > 0
+	animated := c.plan.content.animated()
 	if !animated {
 		c.writeFrameRows(frameRows[len(frameRows)-1])
 		return
 	}
-	fmt.Fprintf(c.w, `<g style="animation:k %.3fs %s steps(1,end)">`, c.plan.duration.Seconds(), c.loopCount())
-	for i := range c.plan.contentFrames {
+	fmt.Fprintf(c.w, `<g style="animation:k %s %s step-end">`, animationDuration(c.plan.duration), c.loopCount())
+	for i := range frameRows {
 		offset := c.contentWidth() * i
 		fmt.Fprintf(c.w, `<g transform="translate(%d,0)">`, offset)
 		c.writeFrameRows(frameRows[i])
@@ -358,17 +371,17 @@ func shouldRenderText(run ir.TextRun) bool {
 }
 
 func (c *canvas) writeCursor() {
-	if !c.plan.cursor.everVisible {
+	if !c.plan.cursorEverVisible {
 		return
 	}
 	point := c.plan.cursor.points[len(c.plan.cursor.points)-1]
 	style := ""
-	if len(c.plan.cursor.points) > 1 && c.plan.duration > 0 {
+	if c.plan.cursor.animated() {
 		point = c.plan.cursor.points[0]
-		style = fmt.Sprintf(` style="animation:cursor %.3fs %s steps(1,end)"`, c.plan.duration.Seconds(), c.loopCount())
+		style = fmt.Sprintf(` style="animation:cursor %s %s step-end"`, animationDuration(c.plan.duration), c.loopCount())
 	}
 	fmt.Fprintf(c.w, `<g transform="translate(%d,%d)" visibility="%s"%s><rect class="cursor" width="%d" height="%d"/></g>`,
-		point.cursor.Col*ColWidth, point.cursor.Row*RowHeight, cursorVisibility(point.cursor), style, ColWidth, RowHeight)
+		point.state.Col*ColWidth, point.state.Row*RowHeight, cursorVisibility(point.state), style, ColWidth, RowHeight)
 }
 
 func (c *canvas) writeTextRun(w io.Writer, run ir.TextRun, rowY int) {

@@ -186,6 +186,33 @@ func TestRender_Keyframes(t *testing.T) {
 	}
 }
 
+func TestRender_UsesCompactStepEndTimelines(t *testing.T) {
+	rec := createTestRecording()
+	rec.Duration = 2 * time.Second
+	rec.Frames[1].Time = time.Second
+	rec.Frames[0].Cursor = ir.Cursor{Visible: true}
+	rec.Frames[1].Cursor = ir.Cursor{Col: 1, Visible: true}
+
+	var buf bytes.Buffer
+	if err := New(renderer.DefaultConfig()).Render(context.Background(), rec, &buf); err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	svg := buf.String()
+	for _, want := range []string{
+		`@keyframes k{0%{transform:translateX(0px)}50%{transform:translateX(-960px)}100%{transform:translateX(-960px)}}`,
+		`@keyframes cursor{0%{transform:translate(0px,0px);visibility:visible}50%{transform:translate(12px,0px);visibility:visible}100%{transform:translate(12px,0px);visibility:visible}}`,
+		`animation:k 2s infinite step-end`,
+		`animation:cursor 2s infinite step-end`,
+	} {
+		if !strings.Contains(svg, want) {
+			t.Errorf("SVG missing compact timeline %q", want)
+		}
+	}
+	if strings.Contains(svg, "steps(1,end)") {
+		t.Fatal("SVG retained the longer equivalent timing function")
+	}
+}
+
 func TestRender_ColorClasses(t *testing.T) {
 	r := New(renderer.DefaultConfig())
 	rec := createTestRecording()
@@ -474,7 +501,7 @@ func TestRender_LoopCount(t *testing.T) {
 			}
 
 			svg := buf.String()
-			expected := tt.want + " steps(1,end)"
+			expected := tt.want + " step-end"
 			if !strings.Contains(svg, expected) {
 				t.Errorf("SVG missing loop count %q", expected)
 			}
@@ -759,7 +786,10 @@ func TestCollectRows_InlinesAtExactByteCost(t *testing.T) {
 	}
 	c := &canvas{rec: rec, config: *renderer.DefaultConfig()}
 
-	frames, defs := c.collectRows(buildRenderPlan(rec, false).contentFrames)
+	plan := buildRenderPlan(rec, false)
+	c.plan = plan
+	_, states := c.contentKeyframes()
+	frames, defs := c.collectRows(states)
 	if len(frames) != 3 || frames[0][0].id != "" || len(defs) != 0 {
 		t.Fatalf("row at exact definition cost was reused: markup=%d id=%q defs=%d", len(frames[0][0].svg), frames[0][0].id, len(defs))
 	}
@@ -781,7 +811,10 @@ func TestCollectRows_AccountsForR10IDLength(t *testing.T) {
 	rec.Frames[2].Time = 2 * time.Second
 	c := &canvas{rec: rec, config: *renderer.DefaultConfig()}
 
-	frames, defs := c.collectRows(buildRenderPlan(rec, false).contentFrames)
+	plan := buildRenderPlan(rec, false)
+	c.plan = plan
+	_, states := c.contentKeyframes()
+	frames, defs := c.collectRows(states)
 	if len(defs) != 10 || frames[0][9].id != "r9" || frames[0][10].id != "" {
 		t.Fatalf("r10-length row was reused without a byte saving: markup=%d id=%q defs=%d", len(frames[0][10].svg), frames[0][10].id, len(defs))
 	}
@@ -815,10 +848,10 @@ func TestRender_PreservesCursorAndTiming(t *testing.T) {
 	}
 	svg := buf.String()
 	for _, want := range []string{
-		`0.000%{transform:translateX(0px)}`,
-		`50.000%{transform:translateX(-960px)}`,
-		`0.000%{transform:translate(24px,25px);visibility:visible}`,
-		`50.000%{transform:translate(48px,25px);visibility:visible}`,
+		`0%{transform:translateX(0px)}`,
+		`50%{transform:translateX(-960px)}`,
+		`0%{transform:translate(24px,25px);visibility:visible}`,
+		`50%{transform:translate(48px,25px);visibility:visible}`,
 		`<rect class="cursor" width="12" height="25"/>`,
 	} {
 		if !strings.Contains(svg, want) {

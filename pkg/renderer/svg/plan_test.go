@@ -23,15 +23,16 @@ func TestBuildRenderPlanSplitsContentAndCursorTimelines(t *testing.T) {
 
 	plan := buildRenderPlan(rec, true)
 
-	if plan.duration != rec.Duration || len(plan.contentFrames) != 1 {
-		t.Fatalf("content plan = duration %v, %d frames", plan.duration, len(plan.contentFrames))
+	if plan.duration != rec.Duration || len(plan.content.points) != 1 {
+		t.Fatalf("content plan = duration %v, %d frames", plan.duration, len(plan.content.points))
 	}
-	wantCursor := []cursorPoint{
-		{time: 0, cursor: ir.Cursor{Visible: true}},
-		{time: time.Second, cursor: ir.Cursor{Col: 2, Visible: true}},
-		{time: 2 * time.Second, cursor: ir.Cursor{Col: 2}},
+	wantCursor := []timelinePoint[ir.Cursor]{
+		{time: 0, state: ir.Cursor{Visible: true}},
+		{time: time.Second, state: ir.Cursor{Col: 2, Visible: true}},
+		{time: 2 * time.Second, state: ir.Cursor{Col: 2}},
+		{time: 3 * time.Second, state: ir.Cursor{Col: 2}},
 	}
-	if !plan.cursor.everVisible || !reflect.DeepEqual(plan.cursor.points, wantCursor) {
+	if !plan.cursorEverVisible || !reflect.DeepEqual(plan.cursor.points, wantCursor) {
 		t.Fatalf("cursor plan = %#v, want %#v", plan.cursor, wantCursor)
 	}
 }
@@ -52,10 +53,10 @@ func TestBuildRenderPlanHoistsOnlyRowsStaticAcrossMissingStates(t *testing.T) {
 	if !reflect.DeepEqual(plan.staticRows, []ir.Row{static}) {
 		t.Fatalf("static rows = %#v, want %#v", plan.staticRows, []ir.Row{static})
 	}
-	if len(plan.contentFrames) != 2 || len(plan.contentFrames[0].rows) != 0 || !reflect.DeepEqual(plan.contentFrames[1].rows, []ir.Row{dynamic}) {
-		t.Fatalf("dynamic frames = %#v", plan.contentFrames)
+	if len(plan.content.points) != 2 || len(plan.content.points[0].state) != 0 || !reflect.DeepEqual(plan.content.points[1].state, []ir.Row{dynamic}) {
+		t.Fatalf("dynamic frames = %#v", plan.content.points)
 	}
-	if plan.cursor.everVisible || len(plan.cursor.points) != 0 {
+	if plan.cursorEverVisible || len(plan.cursor.points) != 0 {
 		t.Fatalf("disabled cursor plan = %#v", plan.cursor)
 	}
 	if !reflect.DeepEqual(rec.Frames, wantFrames) {

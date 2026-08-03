@@ -10,88 +10,48 @@ import (
 )
 
 type renderPlan struct {
-	duration      time.Duration
-	staticRows    []ir.Row
-	contentFrames []contentFrame
-	cursor        cursorPlan
-	usedColors    []color.ID
-}
-
-type contentFrame struct {
-	time time.Duration
-	rows []ir.Row
-}
-
-type cursorPoint struct {
-	time   time.Duration
-	cursor ir.Cursor
-}
-
-type cursorPlan struct {
-	points      []cursorPoint
-	everVisible bool
+	duration          time.Duration
+	staticRows        []ir.Row
+	content           timeline[[]ir.Row]
+	cursor            timeline[ir.Cursor]
+	cursorEverVisible bool
+	usedColors        []color.ID
 }
 
 func buildRenderPlan(rec *ir.Recording, showCursor bool) renderPlan {
 	plan := renderPlan{duration: rec.Duration}
+	content := make([]timelinePoint[[]ir.Row], 0, len(rec.Frames))
 	for _, frame := range rec.Frames {
-		if n := len(plan.contentFrames); n > 0 && plan.contentFrames[n-1].time == frame.Time {
-			plan.contentFrames[n-1].rows = frame.Rows
-		} else {
-			plan.contentFrames = append(plan.contentFrames, contentFrame{time: frame.Time, rows: frame.Rows})
-		}
+		content = append(content, timelinePoint[[]ir.Row]{time: frame.Time, state: frame.Rows})
 	}
-	plan.contentFrames = compactContentFrames(plan.contentFrames)
+	plan.content = normalizeTimeline(rec.Duration, content, rowsEqual)
 	plan.hoistStaticRows(rec.Height)
 
 	if showCursor {
+		cursor := make([]timelinePoint[ir.Cursor], 0, len(rec.Frames))
 		for _, frame := range rec.Frames {
-			plan.cursor.everVisible = plan.cursor.everVisible || frame.Cursor.Visible
-			if n := len(plan.cursor.points); n > 0 && plan.cursor.points[n-1].time == frame.Time {
-				plan.cursor.points[n-1].cursor = frame.Cursor
-			} else {
-				plan.cursor.points = append(plan.cursor.points, cursorPoint{time: frame.Time, cursor: frame.Cursor})
-			}
+			plan.cursorEverVisible = plan.cursorEverVisible || frame.Cursor.Visible
+			cursor = append(cursor, timelinePoint[ir.Cursor]{time: frame.Time, state: frame.Cursor})
 		}
-		plan.cursor.points = compactCursorPoints(plan.cursor.points)
-		if !plan.cursor.everVisible {
+		plan.cursor = normalizeTimeline(rec.Duration, cursor, func(a, b ir.Cursor) bool { return a == b })
+		if !plan.cursorEverVisible {
 			plan.cursor.points = nil
 		}
 	}
-	plan.usedColors = usedColorIDs(rec, plan.staticRows, plan.contentFrames)
+	plan.usedColors = usedColorIDs(rec, plan.staticRows, plan.content.points)
 	return plan
 }
 
-func compactContentFrames(frames []contentFrame) []contentFrame {
-	out := frames[:0]
-	for _, frame := range frames {
-		if len(out) == 0 || !rowsEqual(out[len(out)-1].rows, frame.rows) {
-			out = append(out, frame)
-		}
-	}
-	return out
-}
-
-func compactCursorPoints(points []cursorPoint) []cursorPoint {
-	out := points[:0]
-	for _, point := range points {
-		if len(out) == 0 || out[len(out)-1].cursor != point.cursor {
-			out = append(out, point)
-		}
-	}
-	return out
-}
-
 func (p *renderPlan) hoistStaticRows(height int) {
-	if len(p.contentFrames) == 0 {
+	if len(p.content.points) == 0 {
 		return
 	}
 	static := make(map[int]bool, height)
 	for y := range height {
-		first := rowAt(p.contentFrames[0].rows, y)
+		first := rowAt(p.content.points[0].state, y)
 		static[y] = true
-		for _, frame := range p.contentFrames[1:] {
-			if !rowEqual(first, rowAt(frame.rows, y)) {
+		for _, point := range p.content.points[1:] {
+			if !rowEqual(first, rowAt(point.state, y)) {
 				static[y] = false
 				break
 			}
@@ -100,14 +60,14 @@ func (p *renderPlan) hoistStaticRows(height int) {
 			p.staticRows = append(p.staticRows, first)
 		}
 	}
-	for i := range p.contentFrames {
-		rows := make([]ir.Row, 0, len(p.contentFrames[i].rows))
-		for _, row := range p.contentFrames[i].rows {
+	for i := range p.content.points {
+		rows := make([]ir.Row, 0, len(p.content.points[i].state))
+		for _, row := range p.content.points[i].state {
 			if !static[row.Y] {
 				rows = append(rows, row)
 			}
 		}
-		p.contentFrames[i].rows = rows
+		p.content.points[i].state = rows
 	}
 }
 
@@ -128,7 +88,7 @@ func rowAt(rows []ir.Row, y int) ir.Row {
 	return ir.Row{Y: y}
 }
 
-func usedColorIDs(rec *ir.Recording, staticRows []ir.Row, frames []contentFrame) []color.ID {
+func usedColorIDs(rec *ir.Recording, staticRows []ir.Row, points []timelinePoint[[]ir.Row]) []color.ID {
 	used := make(map[color.ID]bool)
 	visit := func(rows []ir.Row) {
 		for _, row := range rows {
@@ -143,8 +103,8 @@ func usedColorIDs(rec *ir.Recording, staticRows []ir.Row, frames []contentFrame)
 		}
 	}
 	visit(staticRows)
-	for _, frame := range frames {
-		visit(frame.rows)
+	for _, point := range points {
+		visit(point.state)
 	}
 	ids := make([]color.ID, 0, len(used))
 	for id := range used {
