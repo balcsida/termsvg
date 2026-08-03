@@ -2,6 +2,7 @@ package ir
 
 import (
 	"image/color"
+	"math"
 	"testing"
 	"time"
 
@@ -182,6 +183,26 @@ func TestProcessor_PreprocessEventsIdleTimeCap(t *testing.T) {
 				{Time: 0}, {Time: 2}, {Time: 4},
 			},
 			want: []float64{0, 2, 4},
+		},
+		{
+			name: "decimal gap below limit",
+			config: func(config *ProcessorConfig) {
+				config.IdleTimeLimit = 100 * time.Millisecond
+			},
+			events: []asciicast.Event{
+				{Time: 0}, {Time: math.Nextafter(0.1, 0)},
+			},
+			want: []float64{0, math.Nextafter(0.1, 0)},
+		},
+		{
+			name: "decimal gap above limit",
+			config: func(config *ProcessorConfig) {
+				config.IdleTimeLimit = 100 * time.Millisecond
+			},
+			events: []asciicast.Event{
+				{Time: 0}, {Time: math.Nextafter(0.1, math.Inf(1))},
+			},
+			want: []float64{0, 0.1},
 		},
 		{
 			name: "speed before capping",
