@@ -35,7 +35,7 @@ func TestBuildRowBandsGroupsOnlyAdjacentRowsWithMatchingSchedules(t *testing.T) 
 		},
 	}
 
-	bands := buildRowBands(&plan, 3)
+	bands := buildRowBands(&plan, 1, 3)
 	if len(bands) != 2 {
 		t.Fatalf("bands = %#v, want two bands", bands)
 	}
@@ -74,7 +74,7 @@ func TestBuildRowBandsDoesNotJoinNonAdjacentRowsWithSameSchedule(t *testing.T) {
 		}},
 	}
 
-	bands := buildRowBands(&plan, 3)
+	bands := buildRowBands(&plan, 6, 3)
 	if len(bands) != 3 {
 		t.Fatalf("bands = %#v, want three separate bands", bands)
 	}
@@ -87,13 +87,13 @@ func TestBuildRowBandsDoesNotJoinNonAdjacentRowsWithSameSchedule(t *testing.T) {
 
 func TestRowBandsReconstructEveryPlannedContentState(t *testing.T) {
 	static := experimentalRow(1, "static")
-	rec := &ir.Recording{Height: 4, Duration: 2 * time.Second, Frames: []ir.Frame{
+	rec := &ir.Recording{Width: 6, Height: 4, Duration: 2 * time.Second, Frames: []ir.Frame{
 		{Rows: []ir.Row{experimentalRow(0, "a"), static, experimentalRow(3, "x")}},
 		{Time: time.Second, Rows: []ir.Row{experimentalRow(0, "b"), static}},
 		{Time: 2 * time.Second, Rows: []ir.Row{experimentalRow(0, "b"), static, experimentalRow(3, "z")}},
 	}}
 	plan := buildRenderPlan(rec, false)
-	bands := buildRowBands(&plan, rec.Height)
+	bands := buildRowBands(&plan, rec.Width, rec.Height)
 
 	for _, point := range plan.content.points {
 		got := append([]ir.Row(nil), plan.staticRows...)

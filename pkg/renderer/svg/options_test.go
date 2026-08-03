@@ -9,7 +9,7 @@ import (
 
 func TestDefaultOptionsPreserveCompatibilityPath(t *testing.T) {
 	got := DefaultOptions()
-	want := Options{Layout: LayoutFrames, Animation: AnimationCSS}
+	want := Options{Layout: LayoutFrames, Animation: AnimationCSS, FrameSwitch: FrameSwitchTranslate}
 	if got != want {
 		t.Fatalf("DefaultOptions() = %#v, want %#v", got, want)
 	}
@@ -48,7 +48,9 @@ func TestNewAcceptsFunctionalOptionsWithoutChangingExistingCallers(t *testing.T)
 		t.Fatalf("New(config) options = %#v", got.options)
 	}
 	got := New(config, WithLayout(LayoutBands), WithAnimation(AnimationSMIL), WithMaxFPS(30))
-	want := Options{Layout: LayoutBands, Animation: AnimationSMIL, MaxFPS: 30}
+	want := Options{
+		Layout: LayoutBands, Animation: AnimationSMIL, FrameSwitch: FrameSwitchTranslate, MaxFPS: 30,
+	}
 	if got.options != want {
 		t.Fatalf("functional options = %#v, want %#v", got.options, want)
 	}

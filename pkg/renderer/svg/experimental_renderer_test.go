@@ -72,7 +72,7 @@ func TestBandLayoutUsesIndependentBandsAndSharedTimelineCSS(t *testing.T) {
 	if count := strings.Count(got, "animation:b0 "); count != 2 {
 		t.Fatalf("band animation uses = %d, want 2 non-adjacent bands: %s", count, got)
 	}
-	if !strings.Contains(got, `transform="translate(0,50)"`) {
+	if !strings.Contains(got, `<svg x="0" y="50" width="24" height="25" overflow="hidden">`) {
 		t.Fatalf("row 2 band is not positioned independently: %s", got)
 	}
 }
@@ -86,11 +86,11 @@ func TestSMILBackendOmitsContentAndCursorCSSKeyframes(t *testing.T) {
 	if count := strings.Count(got, "<animateTransform"); count != 2 {
 		t.Fatalf("animateTransform count = %d, want content and cursor: %s", count, got)
 	}
-	if !strings.Contains(got, `values="0 0;-120 0;-120 0" keyTimes="0;.5;1"`) {
+	if !strings.Contains(got, `values="0;-120;-120" keyTimes="0;.5;1"`) {
 		t.Fatalf("content SMIL timeline missing: %s", got)
 	}
-	if !strings.Contains(got, `values="visible;visible;hidden" keyTimes="0;.5;1"`) {
-		t.Fatalf("cursor visibility timeline missing: %s", got)
+	if strings.Contains(got, `attributeName="visibility"`) {
+		t.Fatalf("zero-dwell cursor endpoint was retained: %s", got)
 	}
 	if !strings.Contains(got, `repeatCount="indefinite"`) {
 		t.Fatalf("SMIL infinite loop mapping missing: %s", got)

@@ -71,9 +71,9 @@ func TestSMILTranslateValuesAndKeyTimesHaveMatchingLengths(t *testing.T) {
 		{selector: "50%", state: 1},
 		{selector: "100%", state: 1},
 	}
-	c.writeSMILTranslate(&out, frames)
+	c.writeSMILTranslate(&out, frames, c.contentWidth())
 	got := out.String()
-	if !strings.Contains(got, `values="0 0;-120 0;-120 0"`) ||
+	if !strings.Contains(got, `values="0;-120;-120"`) ||
 		!strings.Contains(got, `keyTimes="0;.5;1"`) {
 		t.Fatalf("SMIL translate = %s", got)
 	}

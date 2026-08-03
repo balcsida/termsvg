@@ -19,7 +19,12 @@ func TestNormalizedSVGOptions(t *testing.T) {
 			name:   "experimental options",
 			cmd:    Cmd{SVGLayout: "BANDS", SVGAnimation: "SMIL", SVGMaxFPS: 30},
 			format: "svg",
-			want:   svg.Options{Layout: svg.LayoutBands, Animation: svg.AnimationSMIL, MaxFPS: 30},
+			want: svg.Options{
+				Layout:      svg.LayoutBands,
+				Animation:   svg.AnimationSMIL,
+				FrameSwitch: svg.FrameSwitchTranslate,
+				MaxFPS:      30,
+			},
 		},
 		{name: "negative FPS", cmd: Cmd{SVGMaxFPS: -1}, format: "svg", wantErr: true},
 		{name: "non SVG rejects non-default", cmd: Cmd{SVGLayout: "bands"}, format: "gif", wantErr: true},

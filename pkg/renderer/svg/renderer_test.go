@@ -20,7 +20,7 @@ import (
 	msvg "github.com/tdewolff/minify/v2/svg"
 )
 
-type countingWriter struct {
+type writeCountingWriter struct {
 	bytes.Buffer
 	writes int
 }
@@ -62,7 +62,7 @@ func TestRender_EmptyRecording(t *testing.T) {
 	}
 }
 
-func (w *countingWriter) Write(p []byte) (int, error) {
+func (w *writeCountingWriter) Write(p []byte) (int, error) {
 	w.writes++
 	return w.Buffer.Write(p)
 }
@@ -73,7 +73,7 @@ func (failingWriter) Write([]byte) (int, error) {
 
 func TestRender_BuffersWrites(t *testing.T) {
 	r := New(renderer.DefaultConfig())
-	w := &countingWriter{}
+	w := &writeCountingWriter{}
 
 	if err := r.Render(context.Background(), createTestRecording(), w); err != nil {
 		t.Fatalf("Render() error = %v", err)
@@ -443,7 +443,7 @@ func TestRender_ColoredWhitespace(t *testing.T) {
 	if strings.Count(svg, "<text") != 1 || !strings.Contains(svg, `class="underline"> </text>`) {
 		t.Fatalf("colored whitespace text output = %q", svg)
 	}
-	if !strings.Contains(svg, `<rect class="a" x="0" y="0" width="36" height="25"/>`) {
+	if !strings.Contains(svg, `<rect class="a" y="0" width="36" height="25"/>`) {
 		t.Fatal("colored whitespace backgrounds were not merged")
 	}
 }
@@ -509,6 +509,8 @@ func TestRender_HTMLEscaping(t *testing.T) {
 //nolint:funlen,gocognit // normal and minified output share the same regression assertions.
 func TestRender_HoistsTextWhitespaceAndEscapesTextNodes(t *testing.T) {
 	const inlineText = "  inline middle  "
+	const compactInlineText = "inline middle"
+	repeatedText := strings.TrimSpace(strings.Repeat("repeated middle ", 8))
 	rec := createTestRecording()
 	rec.Width = 80
 	rec.Frames = []ir.Frame{
@@ -555,8 +557,8 @@ func TestRender_HoistsTextWhitespaceAndEscapesTextNodes(t *testing.T) {
 				t.Fatalf("xml:space was not inherited from the root SVG: %s", svg)
 			}
 			if !strings.Contains(svg, `<text x="24" y="20" class="underline">  static  </text>`) ||
-				!strings.Contains(svg, `<text x="36" y="45">  `+strings.Repeat("repeated middle ", 8)+`</text>`) ||
-				!strings.Contains(svg, `<use href="#r0"/>`) {
+				!strings.Contains(svg, `<text id="a" x="60" y="45">`+repeatedText+`</text>`) ||
+				!strings.Contains(svg, `<use href="#a"/>`) {
 				t.Fatalf("space-preserving static or reused text missing: %s", svg)
 			}
 			if !strings.Contains(svg, `<text x="60" y="70">&lt;safe`) || strings.Contains(svg, `<safe>`) ||
@@ -566,15 +568,15 @@ func TestRender_HoistsTextWhitespaceAndEscapesTextNodes(t *testing.T) {
 			if !isMinified && !strings.Contains(svg, `&lt;safe&gt;&amp;"'`) {
 				t.Fatalf("text-node escaping missed a defensive angle escape: %s", svg)
 			}
-			inlineAt := strings.Index(svg, `<text x="48" y="95">`+inlineText+`</text>`)
+			inlineAt := strings.Index(svg, `<text x="72" y="95">`+compactInlineText+`</text>`)
 			if inlineAt < strings.Index(svg, `</defs>`) {
 				t.Fatalf("whitespace-bearing row was not emitted inline: %s", svg)
 			}
 			if err := xml.Unmarshal([]byte(svg), new(struct{})); err != nil {
 				t.Fatalf("SVG is not valid XML: %v", err)
 			}
-			if got, ok := svgTextAt(svg, "48", "95"); !ok || got != inlineText {
-				t.Fatalf("inline text after XML parse = %q, found=%t; want %q", got, ok, inlineText)
+			if got, ok := svgTextAt(svg, "72", "95"); !ok || got != compactInlineText {
+				t.Fatalf("inline text after XML parse = %q, found=%t; want %q", got, ok, compactInlineText)
 			}
 		})
 	}
@@ -883,8 +885,8 @@ func TestRender_ReusesProfitableRows(t *testing.T) {
 	if strings.Count(svg, "ROW:") != 1 {
 		t.Fatalf("repeated row serialized %d times, want 1", strings.Count(svg, "ROW:"))
 	}
-	if strings.Count(svg, `<use href="#r0"/>`) != 2 {
-		t.Fatalf("row references = %d, want 2", strings.Count(svg, `<use href="#r0"/>`))
+	if strings.Count(svg, `<use href="#a"/>`) != 2 {
+		t.Fatalf("row references = %d, want 2", strings.Count(svg, `<use href="#a"/>`))
 	}
 }
 
@@ -902,7 +904,7 @@ func TestRender_InlinesUnprofitableRows(t *testing.T) {
 	if err := New(renderer.DefaultConfig()).Render(context.Background(), rec, &buf); err != nil {
 		t.Fatalf("Render() error = %v", err)
 	}
-	if strings.Contains(buf.String(), `<use href="#r0"/>`) {
+	if strings.Contains(buf.String(), `<use href="#`) {
 		t.Fatal("short row was reused even though references cost more")
 	}
 }
@@ -928,17 +930,19 @@ func TestCollectRows_InlinesAtExactByteCost(t *testing.T) {
 	}
 }
 
-func TestCollectRows_AccountsForR10IDLength(t *testing.T) {
+func TestCollectRows_AccountsForAAIDLength(t *testing.T) {
 	rec := createTestRecording()
+	rec.Height = 27
 	rec.Frames = make([]ir.Frame, 3)
 	for _, i := range []int{0, 2} {
-		for j := range 10 {
+		for j := range 26 {
 			rec.Frames[i].Rows = append(rec.Frames[i].Rows,
 				ir.Row{Y: j, Runs: []ir.TextRun{{Text: strings.Repeat(string(rune('a'+j)), 96)}}})
 		}
-		rec.Frames[i].Rows = append(rec.Frames[i].Rows, ir.Row{Y: 10, Runs: []ir.TextRun{{Text: strings.Repeat("x", 4)}}})
+		rec.Frames[i].Rows = append(rec.Frames[i].Rows,
+			ir.Row{Y: 26, Runs: []ir.TextRun{{Text: strings.Repeat("x", 19)}}})
 	}
-	for j := range 11 {
+	for j := range 27 {
 		rec.Frames[1].Rows = append(rec.Frames[1].Rows, ir.Row{Y: j, Runs: []ir.TextRun{{Text: "different"}}})
 	}
 	rec.Frames[1].Time = time.Second
@@ -950,9 +954,9 @@ func TestCollectRows_AccountsForR10IDLength(t *testing.T) {
 	c.plan = plan
 	_, states := c.contentKeyframes()
 	frames, defs := c.collectRows(states)
-	if len(defs) != 10 || frames[0][9].id != "r9" || frames[0][10].id != "" {
-		t.Fatalf("r10-length row was reused without a byte saving: markup=%d id=%q defs=%d",
-			len(frames[0][10].svg), frames[0][10].id, len(defs))
+	if len(defs) != 26 || frames[0][25].id != "z" || frames[0][26].id != "" {
+		t.Fatalf("aa-length row was reused without a byte saving: markup=%d id=%q defs=%d",
+			len(frames[0][26].svg), frames[0][26].id, len(defs))
 	}
 }
 
