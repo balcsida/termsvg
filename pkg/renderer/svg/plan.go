@@ -41,19 +41,44 @@ func buildRenderPlanWithOptions(rec *ir.Recording, showCursor bool, options Opti
 		plan.cursor = quantizeTimeline(
 			normalizeTimeline(rec.Duration, cursor, cursorStatesEqual), options.MaxFPS, cursorStatesEqual,
 		)
-		effective := plan.cursor.keyframes(cursorStatesEqual)
-		if len(effective) == 0 && len(plan.cursor.points) > 0 {
-			effective = []keyframePoint[ir.Cursor]{{state: plan.cursor.points[len(plan.cursor.points)-1].state}}
-		}
-		plan.cursorEverVisible = slices.ContainsFunc(effective, func(point keyframePoint[ir.Cursor]) bool {
-			return point.state.Visible
-		})
-		if !plan.cursorEverVisible {
-			plan.cursor.points = nil
-		}
+		plan.refreshCursorVisibility()
 	}
 	plan.usedColors = usedColorIDs(rec, plan.staticRows, plan.content.points)
 	return plan
+}
+
+func (p *renderPlan) pruneZeroDwellCursorEndpoint(loopCount int) {
+	if !infiniteLoop(loopCount) || len(p.cursor.points) < 2 {
+		return
+	}
+	last := p.cursor.points[len(p.cursor.points)-1]
+	previous := p.cursor.points[len(p.cursor.points)-2]
+	if last.time != p.duration || cursorStatesEqual(last.state, previous.state) {
+		return
+	}
+
+	// A state introduced exactly at 100% has no dwell time before an infinite
+	// animation restarts at 0%. Remove it, then normalize to retain an explicit
+	// 100% hold of the preceding state for both CSS and SMIL backends.
+	p.cursor = normalizeTimeline(p.duration, p.cursor.points[:len(p.cursor.points)-1], cursorStatesEqual)
+	p.refreshCursorVisibility()
+}
+
+func infiniteLoop(loopCount int) bool {
+	return loopCount == 0 || loopCount < -1
+}
+
+func (p *renderPlan) refreshCursorVisibility() {
+	effective := p.cursor.keyframes(cursorStatesEqual)
+	if len(effective) == 0 && len(p.cursor.points) > 0 {
+		effective = []keyframePoint[ir.Cursor]{{state: p.cursor.points[len(p.cursor.points)-1].state}}
+	}
+	p.cursorEverVisible = slices.ContainsFunc(effective, func(point keyframePoint[ir.Cursor]) bool {
+		return point.state.Visible
+	})
+	if !p.cursorEverVisible {
+		p.cursor.points = nil
+	}
 }
 
 func (p *renderPlan) hoistStaticRows(height int) {

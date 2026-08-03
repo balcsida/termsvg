@@ -97,10 +97,12 @@ func (r *Renderer) Render(ctx context.Context, rec *ir.Recording, w io.Writer) e
 	}
 
 	buf := bufio.NewWriterSize(w, 64*1024)
+	plan := buildRenderPlanWithOptions(rec, r.config.ShowCursor, r.options)
+	plan.pruneZeroDwellCursorEndpoint(r.config.LoopCount)
 	c := &canvas{
 		w:          buf,
 		rec:        rec,
-		plan:       buildRenderPlanWithOptions(rec, r.config.ShowCursor, r.options),
+		plan:       plan,
 		config:     r.config,
 		options:    r.options,
 		classNames: rec.Colors.GenerateClassNames(),
