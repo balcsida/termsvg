@@ -19,12 +19,18 @@ type renderPlan struct {
 }
 
 func buildRenderPlan(rec *ir.Recording, showCursor bool) renderPlan {
+	return buildRenderPlanWithOptions(rec, showCursor, DefaultOptions())
+}
+
+func buildRenderPlanWithOptions(rec *ir.Recording, showCursor bool, options Options) renderPlan {
 	plan := renderPlan{duration: rec.Duration}
 	content := make([]timelinePoint[[]ir.Row], 0, len(rec.Frames))
 	for _, frame := range rec.Frames {
 		content = append(content, timelinePoint[[]ir.Row]{time: frame.Time, state: frame.Rows})
 	}
-	plan.content = normalizeTimeline(rec.Duration, content, rowsEqual)
+	plan.content = quantizeTimeline(
+		normalizeTimeline(rec.Duration, content, rowsEqual), options.MaxFPS, rowsEqual,
+	)
 	plan.hoistStaticRows(rec.Height)
 
 	if showCursor {
@@ -32,7 +38,9 @@ func buildRenderPlan(rec *ir.Recording, showCursor bool) renderPlan {
 		for _, frame := range rec.Frames {
 			cursor = append(cursor, timelinePoint[ir.Cursor]{time: frame.Time, state: frame.Cursor})
 		}
-		plan.cursor = normalizeTimeline(rec.Duration, cursor, cursorStatesEqual)
+		plan.cursor = quantizeTimeline(
+			normalizeTimeline(rec.Duration, cursor, cursorStatesEqual), options.MaxFPS, cursorStatesEqual,
+		)
 		effective := plan.cursor.keyframes(cursorStatesEqual)
 		if len(effective) == 0 && len(plan.cursor.points) > 0 {
 			effective = []keyframePoint[ir.Cursor]{{state: plan.cursor.points[len(plan.cursor.points)-1].state}}

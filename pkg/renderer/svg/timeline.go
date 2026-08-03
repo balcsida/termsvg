@@ -67,6 +67,62 @@ func normalizeTimeline[T any](duration time.Duration, points []timelinePoint[T],
 	return timeline[T]{duration: duration, points: out}
 }
 
+// quantizeTimeline samples a normalized timeline at fixed bucket ends. The
+// last state observed in each bucket wins. The initial and final states are
+// always preserved, so a recording shorter than one bucket can contain both.
+func quantizeTimeline[T any](t timeline[T], maxFPS int, equal func(T, T) bool) timeline[T] {
+	if maxFPS <= 0 || t.duration <= 0 || len(t.points) <= 1 {
+		return t
+	}
+	step := time.Second / time.Duration(maxFPS)
+	if step <= 0 {
+		return t
+	}
+
+	out := make([]timelinePoint[T], 1, len(t.points))
+	out[0] = t.points[0]
+	var pending timelinePoint[T]
+	var pendingEnd time.Duration
+	hasPending := false
+	flush := func() {
+		if hasPending {
+			out = append(out, pending)
+			hasPending = false
+		}
+	}
+
+	for _, point := range t.points[1:] {
+		end := timelineBucketEnd(point.time, step, t.duration)
+		if hasPending && end != pendingEnd {
+			flush()
+		}
+		pending = timelinePoint[T]{time: end, state: point.state}
+		pendingEnd = end
+		hasPending = true
+	}
+	flush()
+
+	return normalizeTimeline(t.duration, out, equal)
+}
+
+func timelineBucketEnd(pointTime, step, duration time.Duration) time.Duration {
+	if pointTime <= 0 {
+		return 0
+	}
+	if pointTime >= duration {
+		return duration
+	}
+	remainder := pointTime % step
+	if remainder == 0 {
+		return pointTime
+	}
+	advance := step - remainder
+	if advance >= duration-pointTime {
+		return duration
+	}
+	return pointTime + advance
+}
+
 func (t timeline[T]) animated() bool {
 	return t.duration > 0 && len(t.points) > 1
 }

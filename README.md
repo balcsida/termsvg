@@ -120,6 +120,13 @@ Available options:
 
 - `-o, --output=<file>` - Output svg to be created. Defaults to [input].svg
 - `-m, --minify` - Minify svg using [Minify](https://github.com/tdewolff/minify)
+- `--svg-layout=frames|bands` - Select the compatibility frame strip or the experimental row-band layout
+- `--svg-animation=css|smil` - Select CSS keyframes or the experimental discrete SMIL backend
+- `--svg-max-fps=<fps>` - Opt into lossy SVG timeline sampling; `0` preserves every state
+
+The SVG defaults remain `frames`, `css`, and `0`, so existing exports keep their
+lossless compatibility path. SVG-specific non-default options are rejected for
+GIF and WebM exports.
 
 ## Example
 

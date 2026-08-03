@@ -1,5 +1,5 @@
 // Package svg provides an SVG renderer for terminal recordings.
-// It generates animated SVGs using CSS keyframes to translate between frames.
+// It generates animated SVGs using CSS keyframes or discrete SMIL timelines.
 package svg
 
 import (
@@ -17,7 +17,8 @@ import (
 
 // Renderer implements the renderer.Renderer interface for SVG output.
 type Renderer struct {
-	config renderer.Config
+	config  renderer.Config
+	options Options
 }
 
 // canvas holds rendering state
@@ -26,6 +27,7 @@ type canvas struct {
 	rec        *ir.Recording
 	plan       renderPlan
 	config     renderer.Config
+	options    Options
 	classNames map[color.ID]string
 }
 
@@ -62,8 +64,14 @@ const (
 var svgTextEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
 
 // New creates a new SVG renderer with the given configuration.
-func New(config *renderer.Config) *Renderer {
-	return &Renderer{config: *config}
+func New(config *renderer.Config, opts ...Option) *Renderer {
+	options := DefaultOptions()
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&options)
+		}
+	}
+	return &Renderer{config: *config, options: options.normalized()}
 }
 
 // Format returns the output format name.
@@ -81,13 +89,17 @@ func (r *Renderer) Render(ctx context.Context, rec *ir.Recording, w io.Writer) e
 	if len(rec.Frames) == 0 {
 		return fmt.Errorf("recording has no frames")
 	}
+	if err := r.options.Validate(); err != nil {
+		return err
+	}
 
 	buf := bufio.NewWriterSize(w, 64*1024)
 	c := &canvas{
 		w:          buf,
 		rec:        rec,
-		plan:       buildRenderPlan(rec, r.config.ShowCursor),
+		plan:       buildRenderPlanWithOptions(rec, r.config.ShowCursor, r.options),
 		config:     r.config,
+		options:    r.options,
 		classNames: rec.Colors.GenerateClassNames(),
 	}
 
@@ -124,8 +136,7 @@ func (c *canvas) render(ctx context.Context) error {
 	default:
 	}
 
-	_, contentStates := c.contentKeyframes()
-	frameRows, rowDefs := c.collectRows(contentStates)
+	content := c.prepareContent()
 
 	// SVG header
 	width := c.paddedWidth()
@@ -146,16 +157,16 @@ func (c *canvas) render(ctx context.Context) error {
 
 	fmt.Fprintf(c.w, `<defs><clipPath id="clip"><rect width="%d" height="%d"/></clipPath>`,
 		c.contentWidth(), c.contentHeight())
-	c.writeRowDefs(rowDefs)
+	c.writeRowDefs(content.rowDefs)
 	fmt.Fprint(c.w, `</defs>`)
 
 	fmt.Fprintf(c.w, `<g transform="translate(%d,%d)" clip-path="url(#clip)">`, Padding, contentY)
 
-	c.writeStyles()
+	c.writeStyles(&content)
 	for _, row := range c.plan.staticRows {
 		c.writeRow(c.w, row)
 	}
-	c.writeFrames(frameRows)
+	c.writeContent(&content)
 	c.writeCursor()
 
 	fmt.Fprint(c.w, `</g></svg>`)
@@ -184,16 +195,26 @@ func (c *canvas) writeWindow() {
 	}
 }
 
-func (c *canvas) writeStyles() {
+func (c *canvas) writeStyles(content *preparedContent) {
 	var sb strings.Builder
 	sb.WriteString("<style>")
 
-	contentFrames, _ := c.contentKeyframes()
-	if len(contentFrames) > 1 {
-		sb.WriteString(c.generateKeyframes())
-	}
-	if len(c.cursorKeyframes()) > 1 {
-		sb.WriteString(c.generateCursorKeyframes())
+	if c.options.Animation == AnimationCSS {
+		if c.options.Layout == LayoutBands {
+			written := make(map[string]bool)
+			for _, band := range content.bands {
+				if band.name == "" || written[band.name] {
+					continue
+				}
+				sb.WriteString(c.generateBandKeyframes(band.name, band.keyframes))
+				written[band.name] = true
+			}
+		} else if len(content.frameKeyframes) > 1 {
+			sb.WriteString(c.generateKeyframes(content.frameKeyframes))
+		}
+		if len(c.cursorKeyframes()) > 1 {
+			sb.WriteString(c.generateCursorKeyframes())
+		}
 	}
 	if c.plan.cursorEverVisible {
 		sb.WriteString("@keyframes blink{0%,50%{opacity:1}50.01%,100%{opacity:0}}")
@@ -238,11 +259,10 @@ func (c *canvas) visibleColorIDs() []color.ID {
 	return c.plan.usedColors
 }
 
-func (c *canvas) generateKeyframes() string {
+func (c *canvas) generateKeyframes(frames []keyframePoint[int]) string {
 	var sb strings.Builder
 	sb.WriteString("@keyframes k{")
 	width := c.contentWidth()
-	frames, _ := c.contentKeyframes()
 	for _, frame := range frames {
 		fmt.Fprintf(&sb, "%s{transform:translateX(%dpx)}", frame.selector, -width*frame.state)
 	}
@@ -252,19 +272,7 @@ func (c *canvas) generateKeyframes() string {
 }
 
 func (c *canvas) contentKeyframes() ([]keyframePoint[int], [][]ir.Row) {
-	frames := c.plan.content.keyframes(rowsEqual)
-	states := make([][]ir.Row, 0, len(frames))
-	out := make([]keyframePoint[int], len(frames))
-	for i, frame := range frames {
-		if len(states) == 0 || !rowsEqual(states[len(states)-1], frame.state) {
-			states = append(states, frame.state)
-		}
-		out[i] = keyframePoint[int]{selector: frame.selector, state: len(states) - 1}
-	}
-	if len(states) == 0 && len(c.plan.content.points) > 0 {
-		states = append(states, c.plan.content.points[len(c.plan.content.points)-1].state)
-	}
-	return out, states
+	return contentKeyframesFor(c.plan.content)
 }
 
 func (c *canvas) collectRows(contentStates [][]ir.Row) (frames [][]*renderedRow, defs []*renderedRow) {
@@ -366,21 +374,69 @@ func (c *canvas) writeRowDefs(defs []*renderedRow) {
 	}
 }
 
-func (c *canvas) writeFrames(frameRows [][]*renderedRow) {
-	frames, _ := c.contentKeyframes()
-	animated := len(frames) > 1
-	if !animated {
-		c.writeFrameRows(frameRows[len(frameRows)-1])
+func (c *canvas) writeContent(content *preparedContent) {
+	if c.options.Layout == LayoutBands {
+		c.writeBands(content.bands)
 		return
 	}
-	fmt.Fprintf(c.w, `<g style="animation:k %s %s step-end">`, animationDuration(c.plan.duration), c.loopCount())
-	for i := range frameRows {
-		offset := c.contentWidth() * i
-		fmt.Fprintf(c.w, `<g transform="translate(%d,0)">`, offset)
-		c.writeFrameRows(frameRows[i])
-		fmt.Fprint(c.w, "</g>")
+	c.writeFrames(content.frameRows, content.frameKeyframes)
+}
+
+func (c *canvas) writeFrames(frameRows [][]*renderedRow, frames []keyframePoint[int]) {
+	if len(frames) <= 1 {
+		if len(frameRows) > 0 {
+			c.writeFrameRows(frameRows[len(frameRows)-1])
+		}
+		return
 	}
+	if c.options.Animation == AnimationSMIL {
+		fmt.Fprint(c.w, `<g>`)
+		c.writeSMILTranslate(c.w, frames)
+	} else {
+		fmt.Fprintf(c.w, `<g style="animation:k %s %s step-end">`, animationDuration(c.plan.duration), c.loopCount())
+	}
+	c.writeStateStrip(frameRows)
 	fmt.Fprint(c.w, "</g>")
+}
+
+func (c *canvas) writeBands(bands []preparedBand) {
+	for _, band := range bands {
+		fmt.Fprintf(c.w, `<g transform="translate(0,%d)">`, band.y*RowHeight)
+		if len(band.keyframes) <= 1 {
+			if len(band.rows) > 0 {
+				c.writeFrameRows(band.rows[len(band.rows)-1])
+			}
+			fmt.Fprint(c.w, `</g>`)
+			continue
+		}
+		if c.options.Animation == AnimationSMIL {
+			fmt.Fprint(c.w, `<g>`)
+			c.writeSMILTranslate(c.w, band.keyframes)
+		} else {
+			fmt.Fprintf(c.w, `<g style="animation:%s %s %s step-end">`,
+				band.name, animationDuration(c.plan.duration), c.loopCount())
+		}
+		c.writeStateStrip(band.rows)
+		fmt.Fprint(c.w, `</g></g>`)
+	}
+}
+
+func (c *canvas) writeStateStrip(states [][]*renderedRow) {
+	for i, rows := range states {
+		fmt.Fprintf(c.w, `<g transform="translate(%d,0)">`, c.contentWidth()*i)
+		c.writeFrameRows(rows)
+		fmt.Fprint(c.w, `</g>`)
+	}
+}
+
+func (c *canvas) generateBandKeyframes(name string, frames []keyframePoint[int]) string {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "@keyframes %s{", name)
+	for _, frame := range frames {
+		fmt.Fprintf(&sb, "%s{transform:translateX(%dpx)}", frame.selector, -c.contentWidth()*frame.state)
+	}
+	sb.WriteString("}")
+	return sb.String()
 }
 
 func (c *canvas) writeFrameRows(rows []*renderedRow) {
@@ -441,11 +497,15 @@ func (c *canvas) writeCursor() {
 	if len(frames) > 0 {
 		point.state = frames[0].state
 	}
-	if len(frames) > 1 {
+	if len(frames) > 1 && c.options.Animation == AnimationCSS {
 		style = fmt.Sprintf(` style="animation:cursor %s %s step-end"`, animationDuration(c.plan.duration), c.loopCount())
 	}
-	fmt.Fprintf(c.w, `<g transform="translate(%d,%d)" visibility="%s"%s><rect class="cursor" width="%d" height="%d"/></g>`,
-		point.state.Col*ColWidth, point.state.Row*RowHeight, cursorVisibility(point.state), style, ColWidth, RowHeight)
+	fmt.Fprintf(c.w, `<g transform="translate(%d,%d)" visibility="%s"%s>`,
+		point.state.Col*ColWidth, point.state.Row*RowHeight, cursorVisibility(point.state), style)
+	if len(frames) > 1 && c.options.Animation == AnimationSMIL {
+		c.writeSMILCursor(c.w, frames)
+	}
+	fmt.Fprintf(c.w, `<rect class="cursor" width="%d" height="%d"/></g>`, ColWidth, RowHeight)
 }
 
 func (c *canvas) writeTextRun(w io.Writer, run ir.TextRun, rowY int) {

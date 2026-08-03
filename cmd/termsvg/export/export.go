@@ -25,23 +25,44 @@ import (
 )
 
 type Cmd struct {
-	File     string        `arg:"" type:"existingfile" help:"Asciicast file to export"`
-	Output   string        `short:"o" type:"path" help:"Output file path (default: <input>.<format>)"`
-	Format   string        `short:"f" default:"svg" enum:"svg,gif,webm" help:"Output format (svg, gif, webm)"`
-	Minify   bool          `short:"m" help:"Minify output (SVG only)"`
-	NoWindow bool          `short:"n" help:"Don't render terminal window chrome"`
-	NoCursor bool          `short:"C" help:"Don't render cursor"`
-	Speed    float64       `short:"s" default:"1.0" help:"Playback speed multiplier"`
-	MaxIdle  time.Duration `short:"i" default:"0" help:"Cap idle time between frames (0 = unlimited)"`
-	Cols     int           `short:"c" default:"0" help:"Override columns (0 = use original)"`
-	Rows     int           `short:"r" default:"0" help:"Override rows (0 = use original)"`
-	Debug    bool          `short:"d" help:"Enable debug logging"`
-	Theme    string        `short:"t" help:"Theme name (built-in) or path to theme JSON file"`
+	File         string        `arg:"" type:"existingfile" help:"Asciicast file to export"`
+	Output       string        `short:"o" type:"path" help:"Output file path (default: <input>.<format>)"`
+	Format       string        `short:"f" default:"svg" enum:"svg,gif,webm" help:"Output format (svg, gif, webm)"`
+	Minify       bool          `short:"m" help:"Minify output (SVG only)"`
+	NoWindow     bool          `short:"n" help:"Don't render terminal window chrome"`
+	NoCursor     bool          `short:"C" help:"Don't render cursor"`
+	Speed        float64       `short:"s" default:"1.0" help:"Playback speed multiplier"`
+	MaxIdle      time.Duration `short:"i" default:"0" help:"Cap idle time between frames (0 = unlimited)"`
+	Cols         int           `short:"c" default:"0" help:"Override columns (0 = use original)"`
+	Rows         int           `short:"r" default:"0" help:"Override rows (0 = use original)"`
+	Debug        bool          `short:"d" help:"Enable debug logging"`
+	Theme        string        `short:"t" help:"Theme name (built-in) or path to theme JSON file"`
+	SVGLayout    string        `default:"frames" enum:"frames,bands" help:"SVG layout: frames or experimental bands"`
+	SVGAnimation string        `default:"css" enum:"css,smil" help:"SVG animation backend (css or experimental smil)"`
+	SVGMaxFPS    int           `default:"0" help:"Maximum SVG timeline FPS; 0 preserves every state"`
 }
 
 type nbspWriter struct {
 	w       io.Writer
 	pending bool
+}
+
+func (cmd *Cmd) normalizedSVGOptions(format string) (svg.Options, error) {
+	options := svg.DefaultOptions()
+	if cmd.SVGLayout != "" {
+		options.Layout = svg.LayoutMode(strings.ToLower(cmd.SVGLayout))
+	}
+	if cmd.SVGAnimation != "" {
+		options.Animation = svg.AnimationMode(strings.ToLower(cmd.SVGAnimation))
+	}
+	options.MaxFPS = cmd.SVGMaxFPS
+	if err := options.Validate(); err != nil {
+		return svg.Options{}, err
+	}
+	if format != "svg" && options != svg.DefaultOptions() {
+		return svg.Options{}, fmt.Errorf("svg-specific options cannot be used with %s output", format)
+	}
+	return options, nil
 }
 
 func newNBSPWriter(w io.Writer) *nbspWriter { return &nbspWriter{w: w} }
@@ -137,6 +158,10 @@ func writeOutputFile(
 //nolint:funlen // sequential export steps are clearer in one function
 func (cmd *Cmd) Run() error {
 	format := strings.ToLower(cmd.Format)
+	svgOptions, err := cmd.normalizedSVGOptions(format)
+	if err != nil {
+		return err
+	}
 
 	output := cmd.Output
 	if output == "" {
@@ -238,7 +263,12 @@ func (cmd *Cmd) Run() error {
 		}
 		rdr = gifRenderer
 	case "svg":
-		rdr = svg.New(renderConfig)
+		rdr = svg.New(
+			renderConfig,
+			svg.WithLayout(svgOptions.Layout),
+			svg.WithAnimation(svgOptions.Animation),
+			svg.WithMaxFPS(svgOptions.MaxFPS),
+		)
 	case "webm":
 		webmRenderer, err := webm.New(renderConfig)
 		if err != nil {
