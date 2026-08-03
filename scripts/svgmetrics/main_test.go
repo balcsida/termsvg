@@ -28,10 +28,11 @@ func TestMeasureUsesActualMinifiedArtifact(t *testing.T) {
 
 func TestMeasureCSSSemantics(t *testing.T) {
 	raw := []byte(`<svg><style>
-/* @keyframes ignored{0%{}} */ .moving { animation: k 1s; filter: url(#f) }
+/* @keyframes ignored{0%{}} translateX(999px) */ .moving { animation: k 1s; filter: url(#f) }
+.idle { animation-delay: 1s; content: "translateX(999px)" }
 @keyframes one { from, 50% { content:"} 99%"; transform:translateX(+1e2px) } to, 50.0% { transform:translate(-2.5e1px,+3e1px) } }
 @keyframes two { from { opacity:0 } to { opacity:1 } }
-</style><g class="moving"><rect filter="url(#f)"/></g><g><animateTransform attributeName="transform"/></g><g style="animation:k 1s"><use href="#r"/></g></svg>`)
+</style><g class="moving"><rect filter="url(#f)"/></g><g class="idle"/><g><animateTransform attributeName="transform"/></g><g style="animation:k 1s"><use href="#r"/></g></svg>`)
 
 	m, err := measure(raw, raw)
 	if err != nil {
@@ -49,6 +50,13 @@ func TestMeasureRejectsMalformedKeyframes(t *testing.T) {
 	_, err := measure([]byte(`<svg><style>@keyframes k{0%{opacity:0}</style></svg>`), []byte(`<svg/>`))
 	if err == nil || !strings.Contains(err.Error(), "unbalanced") {
 		t.Fatalf("error = %v, want unbalanced CSS", err)
+	}
+}
+
+func TestMeasureRejectsMalformedCSSString(t *testing.T) {
+	_, err := measure([]byte(`<svg><style>.x{content:"oops}</style></svg>`), []byte(`<svg/>`))
+	if err == nil {
+		t.Fatal("accepted malformed CSS string")
 	}
 }
 

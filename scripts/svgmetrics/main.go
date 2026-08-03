@@ -105,7 +105,7 @@ func measure(raw, minified []byte) (metrics, error) {
 					if token.Name.Local == "g" && analysis.animated {
 						groups[parent].inlineAnimation = true
 					}
-					transforms = append(transforms, attr.Value)
+					transforms = append(transforms, analysis.transforms...)
 				case "transform":
 					transforms = append(transforms, attr.Value)
 				}
@@ -120,7 +120,6 @@ func measure(raw, minified []byte) (metrics, error) {
 				}
 				parents = parents[:len(parents)-1]
 				styles = append(styles, text)
-				transforms = append(transforms, text)
 			}
 		case xml.EndElement:
 			parents = parents[:len(parents)-1]
@@ -140,6 +139,11 @@ func measure(raw, minified []byte) (metrics, error) {
 		for class := range m.animatedClasses {
 			animatedClasses[class] = true
 		}
+		values, err := cssTransforms(text)
+		if err != nil {
+			return result, err
+		}
+		transforms = append(transforms, values...)
 	}
 	for _, group := range groups {
 		animated := group.inlineAnimation || group.smilAnimation
@@ -284,7 +288,7 @@ func analyzeCSS(text string) (cssMetrics, error) {
 		}
 		animated := false
 		for i := open + 1; i+1 < end-1; i++ {
-			animated = animated || (tokens[i].typeID == css.IdentToken && strings.HasPrefix(strings.ToLower(tokens[i].text), "animation") && tokens[i+1].typeID == css.ColonToken)
+			animated = animated || (tokens[i].typeID == css.IdentToken && isAnimationProperty(tokens[i].text) && tokens[i+1].typeID == css.ColonToken)
 		}
 		if animated {
 			for i := start; i+1 < open; i++ {
@@ -299,8 +303,9 @@ func analyzeCSS(text string) (cssMetrics, error) {
 }
 
 type declarationMetrics struct {
-	filters  int
-	animated bool
+	filters    int
+	animated   bool
+	transforms []string
 }
 
 func analyzeDeclarations(text string) (declarationMetrics, error) {
@@ -317,9 +322,36 @@ func analyzeDeclarations(text string) (declarationMetrics, error) {
 		if name == "filter" {
 			result.filters++
 		}
-		result.animated = result.animated || strings.HasPrefix(name, "animation")
+		result.animated = result.animated || isAnimationProperty(name)
 	}
+	result.transforms, err = cssTransforms(text)
 	return result, nil
+}
+
+func isAnimationProperty(name string) bool {
+	name = strings.ToLower(name)
+	return name == "animation" || name == "animation-name" || name == "-webkit-animation" || name == "-webkit-animation-name"
+}
+
+func cssTransforms(text string) ([]string, error) {
+	tokens, err := lexCSS(text)
+	if err != nil {
+		return nil, err
+	}
+	var values []string
+	for i := 0; i+1 < len(tokens); i++ {
+		if tokens[i].typeID != css.IdentToken || !strings.EqualFold(tokens[i].text, "transform") || tokens[i+1].typeID != css.ColonToken {
+			continue
+		}
+		var value strings.Builder
+		for i += 2; i < len(tokens) && tokens[i].typeID != css.SemicolonToken && tokens[i].typeID != css.RightBraceToken; i++ {
+			if tokens[i].typeID != css.StringToken {
+				value.WriteString(tokens[i].text)
+			}
+		}
+		values = append(values, value.String())
+	}
+	return values, nil
 }
 
 type pairs map[string]string
