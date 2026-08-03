@@ -46,6 +46,17 @@ func TestMeasureCSSSemantics(t *testing.T) {
 	}
 }
 
+func TestMeasureUsesOnlyTranslateXComponent(t *testing.T) {
+	raw := []byte(`<svg><style>.x{transform:translate(+1e2px,-900px) translate3d(-2.5e2px,800px,700px) translateX(+3e2px) translateY(999px)}</style><g transform="translate(-4e2,600)"/></svg>`)
+	m, err := measure(raw, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.MaxTranslate != 400 {
+		t.Fatalf("max translate X = %g, want 400", m.MaxTranslate)
+	}
+}
+
 func TestMeasureRejectsMalformedKeyframes(t *testing.T) {
 	_, err := measure([]byte(`<svg><style>@keyframes k{0%{opacity:0}</style></svg>`), []byte(`<svg/>`))
 	if err == nil || !strings.Contains(err.Error(), "unbalanced") {

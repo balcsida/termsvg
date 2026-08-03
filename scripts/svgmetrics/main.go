@@ -20,7 +20,7 @@ import (
 )
 
 var (
-	translateRE = regexp.MustCompile(`(?i)translate(?:x|y|3d)?\(([^)]*)\)`)
+	translateRE = regexp.MustCompile(`(?i)translate(x|y|3d)?\(([^)]*)\)`)
 	numberRE    = regexp.MustCompile(`[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?`)
 )
 
@@ -156,17 +156,19 @@ func measure(raw, minified []byte) (metrics, error) {
 	}
 	for _, text := range transforms {
 		for _, call := range translateRE.FindAllStringSubmatch(text, -1) {
-			for _, number := range numberRE.FindAllString(call[1], -1) {
-				value, err := strconv.ParseFloat(number, 64)
-				if err != nil {
-					return result, err
-				}
-				if value < 0 {
-					value = -value
-				}
-				if value > result.MaxTranslate {
-					result.MaxTranslate = value
-				}
+			if strings.EqualFold(call[1], "y") {
+				continue
+			}
+			number := numberRE.FindString(call[2])
+			value, err := strconv.ParseFloat(number, 64)
+			if err != nil {
+				return result, err
+			}
+			if value < 0 {
+				value = -value
+			}
+			if value > result.MaxTranslate {
+				result.MaxTranslate = value
 			}
 		}
 	}
