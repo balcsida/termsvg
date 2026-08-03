@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -32,10 +33,12 @@ type canvas struct {
 }
 
 type renderedRow struct {
-	row   ir.Row
-	svg   string
-	count int
-	id    string
+	row        ir.Row
+	svg        string
+	definition string
+	count      int
+	order      int
+	id         string
 }
 
 type backgroundSpan struct {
@@ -298,7 +301,7 @@ func (c *canvas) collectRowsWithHash(
 				}
 			}
 			if entry == nil {
-				entry = &renderedRow{row: row}
+				entry = &renderedRow{row: row, order: len(ordered)}
 				seen[key] = append(seen[key], entry)
 				ordered = append(ordered, entry)
 			}
@@ -307,22 +310,102 @@ func (c *canvas) collectRowsWithHash(
 		}
 	}
 
-	defs = make([]*renderedRow, 0)
 	for _, entry := range ordered {
 		var sb strings.Builder
 		c.writeRow(&sb, entry.row)
 		entry.svg = sb.String()
-		id := fmt.Sprintf("r%d", len(defs))
-		use := fmt.Sprintf(`<use href="#%s"/>`, id)
-		inlineBytes := entry.count * len(entry.svg)
-		definitionBytes := len(`<g id="">`) + len(id) + len(entry.svg) + len(`</g>`) + entry.count*len(use)
+	}
+
+	// Give the most frequently referenced rows the shortest identifiers. The
+	// first-occurrence order is the deterministic tie-breaker.
+	candidates := append([]*renderedRow(nil), ordered...)
+	slices.SortStableFunc(candidates, func(a, b *renderedRow) int {
+		if a.count != b.count {
+			return b.count - a.count
+		}
+		return a.order - b.order
+	})
+
+	defs = make([]*renderedRow, 0)
+	for _, entry := range candidates {
+		if entry.count < 2 || entry.svg == "" {
+			continue
+		}
+		id := compactXMLID(len(defs))
+		definition := c.rowDefinition(entry, id)
+		use := `<use href="#` + id + `"/>`
+		inlineBytes := entry.count * finalSVGBytes(entry.svg, c.config.Minify)
+		definitionBytes := finalSVGBytes(definition, c.config.Minify) +
+			entry.count*finalSVGBytes(use, c.config.Minify)
 		if definitionBytes < inlineBytes {
 			entry.id = id
+			entry.definition = definition
 			defs = append(defs, entry)
 		}
 	}
 
 	return frames, defs
+}
+
+func compactXMLID(index int) string {
+	for {
+		value := compactXMLIDAt(index)
+		if value != "clip" {
+			return value
+		}
+		index++
+	}
+}
+
+func compactXMLIDAt(index int) string {
+	const alphabet = "abcdefghijklmnopqrstuvwxyz"
+	index++
+	var id [16]byte
+	pos := len(id)
+	for index > 0 {
+		index--
+		pos--
+		id[pos] = alphabet[index%len(alphabet)]
+		index /= len(alphabet)
+	}
+	return string(id[pos:])
+}
+
+func finalSVGBytes(value string, minified bool) int {
+	bytes := len(value)
+	if minified {
+		// The export pipeline converts every UTF-8 NBSP (two bytes) back to a
+		// one-byte ASCII space after minification. Profitability must therefore
+		// use the bytes that will actually reach the output file.
+		bytes -= strings.Count(value, "\u00a0")
+	}
+	return bytes
+}
+
+func (c *canvas) rowDefinition(row *renderedRow, id string) string {
+	if c.rowElementCount(row.row) == 1 {
+		return addElementID(row.svg, id)
+	}
+	return `<g id="` + id + `">` + row.svg + `</g>`
+}
+
+func addElementID(svg, id string) string {
+	for _, prefix := range []string{"<rect", "<text"} {
+		if strings.HasPrefix(svg, prefix) {
+			return prefix + ` id="` + id + `"` + strings.TrimPrefix(svg, prefix)
+		}
+	}
+	return `<g id="` + id + `">` + svg + `</g>`
+}
+
+func (c *canvas) rowElementCount(row ir.Row) int {
+	count := len(c.backgroundSpans(row))
+	for _, run := range row.Runs {
+		if _, _, ok := compactTextRun(run); ok {
+			count++
+		}
+	}
+	return count
 }
 
 func semanticRowHash(row ir.Row) uint64 {
@@ -370,7 +453,7 @@ func semanticRowHash(row ir.Row) uint64 {
 
 func (c *canvas) writeRowDefs(defs []*renderedRow) {
 	for _, row := range defs {
-		fmt.Fprintf(c.w, `<g id="%s">%s</g>`, row.id, row.svg)
+		fmt.Fprint(c.w, row.definition)
 	}
 }
 
@@ -423,7 +506,7 @@ func (c *canvas) writeBands(bands []preparedBand) {
 
 func (c *canvas) writeStateStrip(states [][]*renderedRow) {
 	for i, rows := range states {
-		fmt.Fprintf(c.w, `<g transform="translate(%d,0)">`, c.contentWidth()*i)
+		fmt.Fprintf(c.w, `<g transform="translate(%d)">`, c.contentWidth()*i)
 		c.writeFrameRows(rows)
 		fmt.Fprint(c.w, `</g>`)
 	}
@@ -451,8 +534,13 @@ func (c *canvas) writeFrameRows(rows []*renderedRow) {
 
 func (c *canvas) writeRow(w io.Writer, row ir.Row) {
 	for _, span := range c.backgroundSpans(row) {
-		fmt.Fprintf(w, `<rect class="%s" x="%d" y="%d" width="%d" height="%d"/>`,
-			c.classNames[span.colorID], span.startCol*ColWidth, row.Y*RowHeight,
+		x := span.startCol * ColWidth
+		xAttr := ""
+		if x != 0 {
+			xAttr = fmt.Sprintf(` x="%d"`, x)
+		}
+		fmt.Fprintf(w, `<rect class="%s"%s y="%d" width="%d" height="%d"/>`,
+			c.classNames[span.colorID], xAttr, row.Y*RowHeight,
 			(span.endCol-span.startCol)*ColWidth, RowHeight)
 	}
 	for _, run := range row.Runs {
@@ -484,7 +572,22 @@ func runEndCol(run ir.TextRun) int {
 }
 
 func shouldRenderText(run ir.TextRun) bool {
-	return run.Text != "" && (strings.TrimSpace(run.Text) != "" || run.Attrs.Underline)
+	_, _, ok := compactTextRun(run)
+	return ok
+}
+
+// compactTextRun removes only visually inert ASCII spaces. Backgrounds are
+// emitted independently, and underlined whitespace remains visible. Other
+// Unicode whitespace is intentionally preserved.
+func compactTextRun(run ir.TextRun) (text string, startCol int, ok bool) {
+	text = run.Text
+	startCol = run.StartCol
+	if !run.Attrs.Underline {
+		trimmedLeft := strings.TrimLeft(text, " ")
+		startCol += len(text) - len(trimmedLeft)
+		text = strings.TrimRight(trimmedLeft, " ")
+	}
+	return text, startCol, text != ""
 }
 
 func (c *canvas) writeCursor() {
@@ -509,18 +612,18 @@ func (c *canvas) writeCursor() {
 }
 
 func (c *canvas) writeTextRun(w io.Writer, run ir.TextRun, rowY int) {
-	if !shouldRenderText(run) {
+	text, startCol, ok := compactTextRun(run)
+	if !ok {
 		return
 	}
 
-	// Replace spaces with non-breaking spaces to survive minification
-	// Only needed when minifying, as the minifier strips regular spaces
-	text := run.Text
+	// Replace spaces with non-breaking spaces to survive minification. The
+	// streaming export transform restores them after minification.
 	if c.config.Minify {
 		text = strings.ReplaceAll(text, " ", "\u00A0")
 	}
 
-	x := run.StartCol * ColWidth
+	x := startCol * ColWidth
 	y := (rowY*RowHeight + RowHeight) - 5 // baseline offset
 
 	// Build class list
@@ -542,10 +645,14 @@ func (c *canvas) writeTextRun(w io.Writer, run ir.TextRun, rowY int) {
 	}
 
 	// Build attributes
+	xAttr := ""
+	if x != 0 {
+		xAttr = fmt.Sprintf(` x="%d"`, x)
+	}
 	classAttr := ""
 	if len(classes) > 0 {
 		classAttr = fmt.Sprintf(" class=%q", strings.Join(classes, " "))
 	}
 
-	fmt.Fprintf(w, `<text x="%d" y="%d"%s>%s</text>`, x, y, classAttr, svgTextEscaper.Replace(text))
+	fmt.Fprintf(w, `<text%s y="%d"%s>%s</text>`, xAttr, y, classAttr, svgTextEscaper.Replace(text))
 }
