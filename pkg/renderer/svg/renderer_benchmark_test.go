@@ -40,26 +40,28 @@ func benchmarkRecording(b *testing.B, rec *ir.Recording) {
 
 func benchmarkCast(b *testing.B, name string) {
 	b.Helper()
-	path := filepath.Join("..", "..", "..", "examples", name)
-	f, err := os.Open(path) //nolint:gosec // repository benchmark fixture
-	if os.IsNotExist(err) {
-		return
-	}
-	if err != nil {
-		b.Fatal(err)
-	}
-	cast, err := asciicast.Parse(f)
-	if closeErr := f.Close(); err == nil {
-		err = closeErr
-	}
-	if err != nil {
-		b.Fatal(err)
-	}
-	rec, err := ir.NewProcessor(ir.DefaultProcessorConfig()).Process(cast)
-	if err != nil {
-		b.Fatal(err)
-	}
-	b.Run(name, func(b *testing.B) { benchmarkRecording(b, rec) })
+	b.Run(name, func(b *testing.B) {
+		path := filepath.Join("..", "..", "..", "examples", name)
+		f, err := os.Open(path) //nolint:gosec // repository benchmark fixture
+		if os.IsNotExist(err) {
+			b.Skipf("optional fixture not found: %s", path)
+		}
+		if err != nil {
+			b.Fatal(err)
+		}
+		cast, err := asciicast.Parse(f)
+		if closeErr := f.Close(); err == nil {
+			err = closeErr
+		}
+		if err != nil {
+			b.Fatal(err)
+		}
+		rec, err := ir.NewProcessor(ir.DefaultProcessorConfig()).Process(cast)
+		if err != nil {
+			b.Fatal(err)
+		}
+		benchmarkRecording(b, rec)
+	})
 }
 
 func staticFrames(count int) *ir.Recording {
