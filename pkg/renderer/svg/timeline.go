@@ -127,14 +127,20 @@ func animationDuration(duration time.Duration) string {
 }
 
 func decimalDuration(duration, unit time.Duration, suffix string) string {
-	whole, fraction := duration/unit, duration%unit
+	prefix := ""
+	value := uint64(duration)
+	if duration < 0 {
+		prefix = "-"
+		value = uint64(-(duration + 1)) + 1
+	}
+	whole, fraction := value/uint64(unit), value%uint64(unit)
 	if fraction == 0 {
-		return strconv.FormatInt(int64(whole), 10) + suffix
+		return prefix + strconv.FormatUint(whole, 10) + suffix
 	}
 	digits := len(strconv.FormatInt(int64(unit), 10)) - 1
-	value := strconv.FormatInt(int64(whole), 10) + "." + fmt.Sprintf("%0*d", digits, fraction)
-	value = strings.TrimRight(value, "0")
-	return strings.TrimPrefix(value, "0") + suffix
+	formatted := strconv.FormatUint(whole, 10) + "." + fmt.Sprintf("%0*d", digits, fraction)
+	formatted = strings.TrimRight(formatted, "0")
+	return prefix + strings.TrimPrefix(formatted, "0") + suffix
 }
 
 func (c *canvas) loopCount() string {

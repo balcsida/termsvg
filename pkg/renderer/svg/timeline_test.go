@@ -123,10 +123,13 @@ func TestTimelineSelectorsIncreaseOnlyRequiredPrecision(t *testing.T) {
 
 func TestAnimationDurationChoosesShortestExactCSSValue(t *testing.T) {
 	for duration, want := range map[time.Duration]string{
-		500 * time.Millisecond:                 ".5s",
-		1500 * time.Millisecond:                "1.5s",
-		time.Second + time.Nanosecond:          "1.000000001s",
-		500*time.Microsecond + time.Nanosecond: ".500001ms",
+		0:                                       "0s",
+		-500 * time.Millisecond:                 "-.5s",
+		500 * time.Millisecond:                  ".5s",
+		1500 * time.Millisecond:                 "1.5s",
+		time.Second + time.Nanosecond:           "1.000000001s",
+		500*time.Microsecond + time.Nanosecond:  ".500001ms",
+		-500*time.Microsecond - time.Nanosecond: "-.500001ms",
 	} {
 		if got := animationDuration(duration); got != want {
 			t.Errorf("animationDuration(%v) = %q, want %q", duration, got, want)
