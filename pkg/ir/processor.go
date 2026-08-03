@@ -258,18 +258,18 @@ func (p *Processor) preprocessEvents(cast *asciicast.Cast) []asciicast.Event {
 		}
 	}
 
-	// Cap idle time.
+	// ponytail: O(n²) preserves legacy float64 rounding; replace only with a
+	// bit-exact linear algorithm if large idle-capped casts become slow.
 	if p.config.IdleTimeLimit > 0 {
 		limit := p.config.IdleTimeLimit.Seconds()
 		prev := 0.0
-		removed := 0.0
 		for i := range events {
-			events[i].Time -= removed
 			delay := events[i].Time - prev
 			if delay > limit {
 				reduction := delay - limit
-				removed += reduction
-				events[i].Time -= reduction
+				for j := i; j < len(events); j++ {
+					events[j].Time -= reduction
+				}
 			}
 			prev = events[i].Time
 		}

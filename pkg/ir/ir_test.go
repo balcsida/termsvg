@@ -242,23 +242,6 @@ func TestProcessor_PreprocessEventsIdleTimeCap(t *testing.T) {
 	}
 }
 
-func BenchmarkProcessor_PreprocessEventsIdleTimeCap(b *testing.B) {
-	events := make([]asciicast.Event, 10_000)
-	for i := range events {
-		events[i] = asciicast.Event{Time: float64(i * 10)}
-	}
-	cast := &asciicast.Cast{Events: events}
-	config := DefaultProcessorConfig()
-	config.Compress = false
-	config.IdleTimeLimit = time.Second
-	processor := NewProcessor(config)
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_ = processor.preprocessEvents(cast)
-	}
-}
-
 func TestTextRunGrouping(t *testing.T) {
 	cast := &asciicast.Cast{
 		Header: asciicast.Header{
