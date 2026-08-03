@@ -84,8 +84,12 @@ tasks:
     generates:
       - ./examples/*.svg
     cmds:
-      - ./termsvg export "examples/444816.cast" -m -n -o "examples/444816_borderless.svg"
-      - for f in ./examples/*.cast; do ./termsvg export "$f" -m -o "${f%.cast}.svg"; done
+      - ./termsvg export "examples/256colors.cast" -m --svg-layout=bands --svg-animation=smil -o "examples/256colors.svg"
+      - ./termsvg export "examples/444816.cast" -m --svg-animation=smil --svg-max-fps=30 -o "examples/444816.svg"
+      - ./termsvg export "examples/444816.cast" -m -n --svg-animation=smil --svg-max-fps=30 -o "examples/444816_borderless.svg"
+      - ./termsvg export "examples/htop.cast" -m --svg-animation=smil --svg-max-fps=30 -o "examples/htop.svg"
+      - ./termsvg export "examples/rgb.cast" -m --svg-animation=smil --svg-max-fps=30 -o "examples/rgb.svg"
+      - ./termsvg export "examples/session.cast" -m --svg-layout=bands --svg-animation=smil --svg-max-fps=30 -o "examples/session.svg"
       - ./scripts/update-filesize.sh
   goreleaser:
     desc: Run GoReleaser either in snapshot or release mode
@@ -96,4 +100,3 @@ tasks:
         sh: 'if [[ $GITHUB_REF != refs/tags/v* ]]; then echo "--snapshot"; fi'
     cmds:
       - goreleaser release --rm-dist {{.SNAPSHOT}}
-
