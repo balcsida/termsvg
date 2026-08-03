@@ -25,21 +25,22 @@ import (
 )
 
 type Cmd struct {
-	File         string        `arg:"" type:"existingfile" help:"Asciicast file to export"`
-	Output       string        `short:"o" type:"path" help:"Output file path (default: <input>.<format>)"`
-	Format       string        `short:"f" default:"svg" enum:"svg,gif,webm" help:"Output format (svg, gif, webm)"`
-	Minify       bool          `short:"m" help:"Minify output (SVG only)"`
-	NoWindow     bool          `short:"n" help:"Don't render terminal window chrome"`
-	NoCursor     bool          `short:"C" help:"Don't render cursor"`
-	Speed        float64       `short:"s" default:"1.0" help:"Playback speed multiplier"`
-	MaxIdle      time.Duration `short:"i" default:"0" help:"Cap idle time between frames (0 = unlimited)"`
-	Cols         int           `short:"c" default:"0" help:"Override columns (0 = use original)"`
-	Rows         int           `short:"r" default:"0" help:"Override rows (0 = use original)"`
-	Debug        bool          `short:"d" help:"Enable debug logging"`
-	Theme        string        `short:"t" help:"Theme name (built-in) or path to theme JSON file"`
-	SVGLayout    string        `default:"frames" enum:"frames,bands" help:"SVG layout: frames or experimental bands"`
-	SVGAnimation string        `default:"css" enum:"css,smil" help:"SVG animation backend (css or experimental smil)"`
-	SVGMaxFPS    int           `default:"0" help:"Maximum SVG timeline FPS; 0 preserves every state"`
+	File           string        `arg:"" type:"existingfile" help:"Asciicast file to export"`
+	Output         string        `short:"o" type:"path" help:"Output file path (default: <input>.<format>)"`
+	Format         string        `short:"f" default:"svg" enum:"svg,gif,webm" help:"Output format (svg, gif, webm)"`
+	Minify         bool          `short:"m" help:"Minify output (SVG only)"`
+	NoWindow       bool          `short:"n" help:"Don't render terminal window chrome"`
+	NoCursor       bool          `short:"C" help:"Don't render cursor"`
+	Speed          float64       `short:"s" default:"1.0" help:"Playback speed multiplier"`
+	MaxIdle        time.Duration `short:"i" default:"0" help:"Cap idle time between frames (0 = unlimited)"`
+	Cols           int           `short:"c" default:"0" help:"Override columns (0 = use original)"`
+	Rows           int           `short:"r" default:"0" help:"Override rows (0 = use original)"`
+	Debug          bool          `short:"d" help:"Enable debug logging"`
+	Theme          string        `short:"t" help:"Theme name (built-in) or path to theme JSON file"`
+	SVGLayout      string        `default:"frames" enum:"frames,bands" help:"SVG layout: frames or experimental bands"`
+	SVGAnimation   string        `default:"css" enum:"css,smil" help:"SVG animation backend (css or experimental smil)"`
+	SVGFrameSwitch string        `default:"translate" enum:"translate,href" help:"SVG state switching: translated strips or experimental animated hrefs"`
+	SVGMaxFPS      int           `default:"0" help:"Maximum SVG timeline FPS; 0 preserves every state"`
 }
 
 type nbspWriter struct {
@@ -54,6 +55,9 @@ func (cmd *Cmd) normalizedSVGOptions(format string) (svg.Options, error) {
 	}
 	if cmd.SVGAnimation != "" {
 		options.Animation = svg.AnimationMode(strings.ToLower(cmd.SVGAnimation))
+	}
+	if cmd.SVGFrameSwitch != "" {
+		options.FrameSwitch = svg.FrameSwitchMode(strings.ToLower(cmd.SVGFrameSwitch))
 	}
 	options.MaxFPS = cmd.SVGMaxFPS
 	if err := options.Validate(); err != nil {
@@ -267,6 +271,7 @@ func (cmd *Cmd) Run() error {
 			renderConfig,
 			svg.WithLayout(svgOptions.Layout),
 			svg.WithAnimation(svgOptions.Animation),
+			svg.WithFrameSwitch(svgOptions.FrameSwitch),
 			svg.WithMaxFPS(svgOptions.MaxFPS),
 		)
 	case "webm":

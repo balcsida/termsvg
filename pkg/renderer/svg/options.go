@@ -11,10 +11,14 @@ type LayoutMode string
 // AnimationMode selects the SVG animation mechanism.
 type AnimationMode string
 
+// FrameSwitchMode selects how discrete content states are activated.
+type FrameSwitchMode string
+
 // Options contains SVG-specific renderer settings.
 type Options struct {
-	Layout    LayoutMode
-	Animation AnimationMode
+	Layout      LayoutMode
+	Animation   AnimationMode
+	FrameSwitch FrameSwitchMode
 	// MaxFPS limits SVG timeline samples. Zero preserves every source state.
 	MaxFPS int
 }
@@ -34,13 +38,19 @@ const (
 	AnimationCSS AnimationMode = "css"
 	// AnimationSMIL emits discrete SVG animation elements.
 	AnimationSMIL AnimationMode = "smil"
+
+	// FrameSwitchTranslate places states in a translated strip.
+	FrameSwitchTranslate FrameSwitchMode = "translate"
+	// FrameSwitchHref animates one use element between state definitions.
+	FrameSwitchHref FrameSwitchMode = "href"
 )
 
 // DefaultOptions returns the compatibility-preserving SVG defaults.
 func DefaultOptions() Options {
 	return Options{
-		Layout:    LayoutFrames,
-		Animation: AnimationCSS,
+		Layout:      LayoutFrames,
+		Animation:   AnimationCSS,
+		FrameSwitch: FrameSwitchTranslate,
 	}
 }
 
@@ -54,6 +64,11 @@ func WithAnimation(animation AnimationMode) Option {
 	return func(options *Options) { options.Animation = animation }
 }
 
+// WithFrameSwitch selects translated strips or experimental animated hrefs.
+func WithFrameSwitch(frameSwitch FrameSwitchMode) Option {
+	return func(options *Options) { options.FrameSwitch = frameSwitch }
+}
+
 // WithMaxFPS enables opt-in lossy timeline sampling. Zero keeps all states.
 func WithMaxFPS(maxFPS int) Option {
 	return func(options *Options) { options.MaxFPS = maxFPS }
@@ -65,6 +80,9 @@ func (o Options) normalized() Options {
 	}
 	if o.Animation == "" {
 		o.Animation = AnimationCSS
+	}
+	if o.FrameSwitch == "" {
+		o.FrameSwitch = FrameSwitchTranslate
 	}
 	return o
 }
@@ -80,6 +98,14 @@ func (o Options) Validate() error {
 	case AnimationCSS, AnimationSMIL:
 	default:
 		return fmt.Errorf("unsupported SVG animation mode %q", o.Animation)
+	}
+	switch o.FrameSwitch {
+	case FrameSwitchTranslate, FrameSwitchHref:
+	default:
+		return fmt.Errorf("unsupported SVG frame switch mode %q", o.FrameSwitch)
+	}
+	if o.FrameSwitch == FrameSwitchHref && o.Animation != AnimationSMIL {
+		return fmt.Errorf("SVG href frame switching requires SMIL animation")
 	}
 	if o.MaxFPS < 0 {
 		return fmt.Errorf("max SVG FPS must not be negative: %d", o.MaxFPS)

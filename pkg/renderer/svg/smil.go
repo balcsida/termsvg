@@ -28,6 +28,21 @@ func (c *canvas) writeSMILTranslate(w io.Writer, frames []keyframePoint[int], wi
 	})
 }
 
+func (c *canvas) writeSMILHref(w io.Writer, frames []keyframePoint[int], ids []string) {
+	values := make([]string, len(frames))
+	for i, frame := range frames {
+		if frame.state < 0 || frame.state >= len(ids) {
+			return
+		}
+		values[i] = "#" + ids[frame.state]
+	}
+	c.writeSMILAnimation(w, "animate", []smilAttribute{
+		{name: "attributeName", value: "href"},
+		{name: "values", value: strings.Join(values, ";")},
+		{name: "keyTimes", value: smilKeyTimes(frames)},
+	})
+}
+
 func (c *canvas) writeSMILCursor(w io.Writer, frames []keyframePoint[ir.Cursor]) {
 	positionChanges := false
 	visibilityChanges := false

@@ -163,6 +163,7 @@ func (c *canvas) render(ctx context.Context) error {
 	fmt.Fprintf(c.w, `<defs><clipPath id="clip"><rect width="%d" height="%d"/></clipPath>`,
 		c.contentWidth(), c.contentHeight())
 	c.writeRowDefs(content.rowDefs)
+	c.writeStateDefs(&content)
 	fmt.Fprint(c.w, `</defs>`)
 
 	fmt.Fprintf(c.w, `<g transform="translate(%d,%d)" clip-path="url(#clip)">`, Padding, contentY)
@@ -459,19 +460,45 @@ func (c *canvas) writeRowDefs(defs []*renderedRow) {
 	}
 }
 
+func (c *canvas) writeStateDefs(content *preparedContent) {
+	if c.options.FrameSwitch != FrameSwitchHref {
+		return
+	}
+	for i, id := range content.frameStateIDs {
+		fmt.Fprintf(c.w, `<g id="%s">`, id)
+		c.writeFrameRows(content.frameRows[i])
+		fmt.Fprint(c.w, `</g>`)
+	}
+	for _, band := range content.bands {
+		for i, id := range band.stateIDs {
+			fmt.Fprintf(c.w, `<g id="%s">`, id)
+			c.writeFrameRows(band.rows[i])
+			fmt.Fprint(c.w, `</g>`)
+		}
+	}
+}
+
 func (c *canvas) writeContent(content *preparedContent) {
 	if c.options.Layout == LayoutBands {
 		c.writeBands(content.bands)
 		return
 	}
-	c.writeFrames(content.frameRows, content.frameKeyframes)
+	c.writeFrames(content.frameRows, content.frameKeyframes, content.frameStateIDs)
 }
 
-func (c *canvas) writeFrames(frameRows [][]*renderedRow, frames []keyframePoint[int]) {
+func (c *canvas) writeFrames(
+	frameRows [][]*renderedRow,
+	frames []keyframePoint[int],
+	stateIDs []string,
+) {
 	if len(frames) <= 1 {
 		if len(frameRows) > 0 {
 			c.writeFrameRows(frameRows[len(frameRows)-1])
 		}
+		return
+	}
+	if c.options.FrameSwitch == FrameSwitchHref {
+		c.writeHrefSequence(frames, stateIDs)
 		return
 	}
 	if c.options.Animation == AnimationSMIL {
@@ -497,6 +524,11 @@ func (c *canvas) writeBands(bands []preparedBand) {
 			fmt.Fprint(c.w, `</svg>`)
 			continue
 		}
+		if c.options.FrameSwitch == FrameSwitchHref {
+			c.writeHrefSequence(band.keyframes, band.stateIDs)
+			fmt.Fprint(c.w, `</svg>`)
+			continue
+		}
 		if c.options.Animation == AnimationSMIL {
 			fmt.Fprint(c.w, `<g>`)
 			c.writeSMILTranslate(c.w, band.keyframes, width)
@@ -507,6 +539,19 @@ func (c *canvas) writeBands(bands []preparedBand) {
 		c.writeStateStrip(band.rows, width)
 		fmt.Fprint(c.w, `</g></svg>`)
 	}
+}
+
+func (c *canvas) writeHrefSequence(frames []keyframePoint[int], ids []string) {
+	if len(frames) == 0 || len(ids) == 0 {
+		return
+	}
+	initial := frames[0].state
+	if initial < 0 || initial >= len(ids) {
+		return
+	}
+	fmt.Fprintf(c.w, `<use href="#%s">`, ids[initial])
+	c.writeSMILHref(c.w, frames, ids)
+	fmt.Fprint(c.w, `</use>`)
 }
 
 func (c *canvas) writeStateStrip(states [][]*renderedRow, width int) {

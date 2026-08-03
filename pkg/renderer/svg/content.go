@@ -10,6 +10,7 @@ import (
 type preparedContent struct {
 	frameKeyframes []keyframePoint[int]
 	frameRows      [][]*renderedRow
+	frameStateIDs  []string
 	bands          []preparedBand
 	rowDefs        []*renderedRow
 }
@@ -22,6 +23,7 @@ type preparedBand struct {
 	name      string
 	keyframes []keyframePoint[int]
 	rows      [][]*renderedRow
+	stateIDs  []string
 }
 
 func (c *canvas) prepareContent() preparedContent {
@@ -30,7 +32,11 @@ func (c *canvas) prepareContent() preparedContent {
 	}
 	keyframes, states := c.contentKeyframes()
 	frames, defs := c.collectRows(states)
-	return preparedContent{frameKeyframes: keyframes, frameRows: frames, rowDefs: defs}
+	prepared := preparedContent{frameKeyframes: keyframes, frameRows: frames, rowDefs: defs}
+	if c.options.FrameSwitch == FrameSwitchHref && len(keyframes) > 1 {
+		prepared.frameStateIDs = stateIDs("_f", len(frames))
+	}
+	return prepared
 }
 
 func (c *canvas) prepareBands() preparedContent {
@@ -57,6 +63,9 @@ func (c *canvas) prepareBands() preparedContent {
 	prepared.rowDefs = defs
 	for i := range prepared.bands {
 		prepared.bands[i].rows = frames[stateOffsets[i]:stateOffsets[i+1]]
+		if c.options.FrameSwitch == FrameSwitchHref && len(prepared.bands[i].keyframes) > 1 {
+			prepared.bands[i].stateIDs = stateIDs("_b"+strconv.Itoa(i)+"_", len(prepared.bands[i].rows))
+		}
 	}
 
 	names := make(map[string]string)
@@ -102,4 +111,12 @@ func keyframeSignature(frames []keyframePoint[int], width int) string {
 		signature.WriteByte(';')
 	}
 	return signature.String()
+}
+
+func stateIDs(prefix string, count int) []string {
+	ids := make([]string, count)
+	for i := range count {
+		ids[i] = prefix + strconv.Itoa(i)
+	}
+	return ids
 }
