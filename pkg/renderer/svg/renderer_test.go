@@ -674,6 +674,35 @@ func TestRender_InlinesUnprofitableRows(t *testing.T) {
 	}
 }
 
+func TestCollectRows_InlinesAtExactByteCost(t *testing.T) {
+	rec := createTestRecording()
+	row := ir.Row{Y: 0, Runs: []ir.TextRun{{Text: strings.Repeat("x", 2)}}}
+	rec.Frames = []ir.Frame{{Rows: []ir.Row{row}}, {Rows: []ir.Row{row}}}
+	c := &canvas{rec: rec, config: *renderer.DefaultConfig()}
+
+	frames, defs := c.collectRows()
+	if len(frames) != 2 || frames[0][0].id != "" || len(defs) != 0 {
+		t.Fatalf("row at exact definition cost was reused: markup=%d id=%q defs=%d", len(frames[0][0].svg), frames[0][0].id, len(defs))
+	}
+}
+
+func TestCollectRows_AccountsForR10IDLength(t *testing.T) {
+	rec := createTestRecording()
+	rec.Frames = make([]ir.Frame, 2)
+	for i := range 2 {
+		for j := range 10 {
+			rec.Frames[i].Rows = append(rec.Frames[i].Rows, ir.Row{Y: j, Runs: []ir.TextRun{{Text: strings.Repeat(string(rune('a'+j)), 96)}}})
+		}
+		rec.Frames[i].Rows = append(rec.Frames[i].Rows, ir.Row{Y: 10, Runs: []ir.TextRun{{Text: strings.Repeat("x", 4)}}})
+	}
+	c := &canvas{rec: rec, config: *renderer.DefaultConfig()}
+
+	frames, defs := c.collectRows()
+	if len(defs) != 10 || frames[0][9].id != "r9" || frames[0][10].id != "" {
+		t.Fatalf("r10-length row was reused without a byte saving: markup=%d id=%q defs=%d", len(frames[0][10].svg), frames[0][10].id, len(defs))
+	}
+}
+
 func TestRender_InlinesUniqueRows(t *testing.T) {
 	rec := createTestRecording()
 	rec.Frames = []ir.Frame{
