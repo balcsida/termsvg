@@ -122,6 +122,7 @@ Available options:
 - `-m, --minify` - Minify svg using [Minify](https://github.com/tdewolff/minify)
 - `--svg-layout=frames|bands|auto` - Select the compatibility frame strip, experimental local row bands, or opt-in size-based auto selection
 - `--svg-animation=css|smil` - Select CSS keyframes or the experimental discrete SMIL backend
+- `--svg-frame-switch=translate|href` - Select translated strips or experimental SMIL `href` switching
 - `--svg-max-fps=<fps>` - Opt into lossy SVG timeline sampling; `0` preserves every state
 
 The SVG defaults remain `frames`, `css`, and `0`, so existing exports keep their
