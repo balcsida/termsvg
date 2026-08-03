@@ -784,6 +784,7 @@ func TestCollectRows_InlinesAtExactByteCost(t *testing.T) {
 		{Time: time.Second, Rows: []ir.Row{{Y: 0, Runs: []ir.TextRun{{Text: "different"}}}}},
 		{Time: 2 * time.Second, Rows: []ir.Row{row}},
 	}
+	rec.Duration = 2 * time.Second
 	c := &canvas{rec: rec, config: *renderer.DefaultConfig()}
 
 	plan := buildRenderPlan(rec, false)
@@ -809,6 +810,7 @@ func TestCollectRows_AccountsForR10IDLength(t *testing.T) {
 	}
 	rec.Frames[1].Time = time.Second
 	rec.Frames[2].Time = 2 * time.Second
+	rec.Duration = 2 * time.Second
 	c := &canvas{rec: rec, config: *renderer.DefaultConfig()}
 
 	plan := buildRenderPlan(rec, false)

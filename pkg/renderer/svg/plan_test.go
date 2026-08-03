@@ -40,7 +40,7 @@ func TestBuildRenderPlanSplitsContentAndCursorTimelines(t *testing.T) {
 func TestBuildRenderPlanHoistsOnlyRowsStaticAcrossMissingStates(t *testing.T) {
 	static := ir.Row{Y: 0, Runs: []ir.TextRun{{Text: "static"}}}
 	dynamic := ir.Row{Y: 1, Runs: []ir.TextRun{{Text: "dynamic"}}}
-	rec := &ir.Recording{Height: 3, Frames: []ir.Frame{
+	rec := &ir.Recording{Height: 3, Duration: time.Second, Frames: []ir.Frame{
 		{Rows: []ir.Row{static}},
 		{Time: time.Second, Rows: []ir.Row{static, dynamic}},
 	}}

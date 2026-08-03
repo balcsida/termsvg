@@ -35,6 +35,29 @@ func TestNormalizeTimelineCompactsAfterSameTimeReplacement(t *testing.T) {
 	}
 }
 
+func TestNormalizeTimelineClampsPointsToEndpoints(t *testing.T) {
+	got := normalizeTimeline(2*time.Second, []timelinePoint[string]{
+		{time: -time.Second, state: "old start"},
+		{state: "start"},
+		{time: time.Second, state: "middle"},
+		{time: 3 * time.Second, state: "old end"},
+		{time: 4 * time.Second, state: "end"},
+	}, func(a, b string) bool { return a == b })
+	want := timeline[string]{duration: 2 * time.Second, points: []timelinePoint[string]{
+		{state: "start"},
+		{time: time.Second, state: "middle"},
+		{time: 2 * time.Second, state: "end"},
+	}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("timeline = %#v, want %#v", got, want)
+	}
+	for _, frame := range got.keyframes() {
+		if frame.selector[0] == '-' || frame.selector[0] > '9' {
+			t.Fatalf("out-of-range selector %q", frame.selector)
+		}
+	}
+}
+
 func TestNormalizeTimelineMakesStaticAndZeroDurationTimelinesStatic(t *testing.T) {
 	for _, tt := range []struct {
 		name     string
@@ -51,7 +74,7 @@ func TestNormalizeTimelineMakesStaticAndZeroDurationTimelinesStatic(t *testing.T
 		{
 			name:   "zero duration uses final state",
 			points: []timelinePoint[int]{{state: 1}, {time: time.Second, state: 2}},
-			want:   timeline[int]{points: []timelinePoint[int]{{state: 1}, {time: time.Second, state: 2}}},
+			want:   timeline[int]{points: []timelinePoint[int]{{state: 2}}},
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
