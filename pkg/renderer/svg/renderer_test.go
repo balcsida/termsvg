@@ -3,6 +3,7 @@ package svg
 import (
 	"bytes"
 	"context"
+	"encoding/xml"
 	"errors"
 	"image/color"
 	"os"
@@ -15,6 +16,8 @@ import (
 	termcolor "github.com/mrmarble/termsvg/pkg/color"
 	"github.com/mrmarble/termsvg/pkg/ir"
 	"github.com/mrmarble/termsvg/pkg/renderer"
+	"github.com/tdewolff/minify/v2"
+	msvg "github.com/tdewolff/minify/v2/svg"
 )
 
 func TestNew(t *testing.T) {
@@ -495,6 +498,68 @@ func TestRender_HTMLEscaping(t *testing.T) {
 	}
 	if !strings.Contains(svg, "&lt;script&gt;") {
 		t.Error("SVG missing escaped script tag")
+	}
+}
+
+func TestRender_HoistsTextWhitespaceAndEscapesTextNodes(t *testing.T) {
+	rec := createTestRecording()
+	rec.Width = 80
+	rec.Frames = []ir.Frame{
+		{Time: 0, Rows: []ir.Row{
+			{Y: 0, Runs: []ir.TextRun{{Text: "  static  ", StartCol: 2, Attrs: ir.CellAttrs{Underline: true}}}},
+			{Y: 1, Runs: []ir.TextRun{{Text: "  " + strings.Repeat("repeated middle ", 8), StartCol: 3}}},
+			{Y: 2, Runs: []ir.TextRun{{Text: `<safe>&"'`, StartCol: 5}}},
+		}},
+		{Time: time.Second, Rows: []ir.Row{
+			{Y: 0, Runs: []ir.TextRun{{Text: "  static  ", StartCol: 2, Attrs: ir.CellAttrs{Underline: true}}}},
+			{Y: 1, Runs: []ir.TextRun{{Text: "different", StartCol: 3}}},
+			{Y: 2, Runs: []ir.TextRun{{Text: `<safe>&"'`, StartCol: 5}}},
+		}},
+		{Time: 2 * time.Second, Rows: []ir.Row{
+			{Y: 0, Runs: []ir.TextRun{{Text: "  static  ", StartCol: 2, Attrs: ir.CellAttrs{Underline: true}}}},
+			{Y: 1, Runs: []ir.TextRun{{Text: "  " + strings.Repeat("repeated middle ", 8), StartCol: 3}}},
+			{Y: 2, Runs: []ir.TextRun{{Text: `<safe>&"'`, StartCol: 5}}},
+		}},
+	}
+	rec.Duration = 2 * time.Second
+	rec.Stats.HasUnderline = true
+
+	for _, isMinified := range []bool{false, true} {
+		t.Run(map[bool]string{false: "normal", true: "minified"}[isMinified], func(t *testing.T) {
+			config := renderer.DefaultConfig()
+			config.Minify = isMinified
+			var buf bytes.Buffer
+			if err := New(config).Render(context.Background(), rec, &buf); err != nil {
+				t.Fatalf("Render() error = %v", err)
+			}
+			svg := buf.String()
+			if isMinified {
+				m := minify.New()
+				m.AddFunc("image/svg+xml", msvg.Minify)
+				var output bytes.Buffer
+				if err := m.Minify("image/svg+xml", &output, &buf); err != nil {
+					t.Fatalf("Minify() error = %v", err)
+				}
+				svg = strings.ReplaceAll(output.String(), "\u00a0", " ")
+			}
+			if !isMinified && (strings.Count(svg, `xml:space="preserve"`) != 1 || !strings.Contains(svg, `<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve"`)) {
+				t.Fatalf("xml:space was not inherited from the root SVG: %s", svg)
+			}
+			if !strings.Contains(svg, `<text x="24" y="20" class="underline">  static  </text>`) ||
+				!strings.Contains(svg, `<text x="36" y="45">  `+strings.Repeat("repeated middle ", 8)+`</text>`) ||
+				!strings.Contains(svg, `<use href="#r0"/>`) {
+				t.Fatalf("space-preserving static or reused text missing: %s", svg)
+			}
+			if !strings.Contains(svg, `<text x="60" y="70">&lt;safe`) || strings.Contains(svg, `<safe>`) || strings.Contains(svg, `&#34;`) || strings.Contains(svg, `&#39;`) {
+				t.Fatalf("text-node escaping changed quotes or missed XML escapes: %s", svg)
+			}
+			if !isMinified && !strings.Contains(svg, `&lt;safe&gt;&amp;"'`) {
+				t.Fatalf("text-node escaping missed a defensive angle escape: %s", svg)
+			}
+			if err := xml.Unmarshal([]byte(svg), new(struct{})); err != nil {
+				t.Fatalf("SVG is not valid XML: %v", err)
+			}
+		})
 	}
 }
 

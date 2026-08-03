@@ -6,7 +6,6 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"html"
 	"io"
 	"strings"
 	"unicode/utf8"
@@ -15,6 +14,8 @@ import (
 	"github.com/mrmarble/termsvg/pkg/ir"
 	"github.com/mrmarble/termsvg/pkg/renderer"
 )
+
+var svgTextEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
 
 // Renderer implements the renderer.Renderer interface for SVG output.
 type Renderer struct {
@@ -128,7 +129,7 @@ func (c *canvas) render(ctx context.Context) error {
 	// SVG header
 	width := c.paddedWidth()
 	height := c.paddedHeight()
-	fmt.Fprintf(c.w, `<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d">`, width, height)
+	fmt.Fprintf(c.w, `<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve" width="%d" height="%d">`, width, height)
 
 	if c.config.ShowWindow {
 		c.writeWindow()
@@ -428,6 +429,5 @@ func (c *canvas) writeTextRun(w io.Writer, run ir.TextRun, rowY int) {
 		classAttr = fmt.Sprintf(" class=%q", strings.Join(classes, " "))
 	}
 
-	fmt.Fprintf(w, `<text x="%d" y="%d" xml:space="preserve"%s>%s</text>`,
-		x, y, classAttr, html.EscapeString(text))
+	fmt.Fprintf(w, `<text x="%d" y="%d"%s>%s</text>`, x, y, classAttr, svgTextEscaper.Replace(text))
 }
