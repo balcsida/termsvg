@@ -32,6 +32,7 @@ func buildRenderPlanWithOptions(rec *ir.Recording, showCursor bool, options Opti
 		normalizeTimeline(rec.Duration, content, rowsEqual), options.MaxFPS, rowsEqual,
 	)
 	plan.hoistStaticRows(rec.Height)
+	plan.hoistStaticCells(rec.Width, rec.Height, rec.Colors)
 
 	if showCursor {
 		cursor := make([]timelinePoint[ir.Cursor], 0, len(rec.Frames))
