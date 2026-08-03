@@ -288,7 +288,7 @@ func TestRender_TextAttributes(t *testing.T) {
 	}
 }
 
-func TestRender_BackgroundFilters(t *testing.T) {
+func TestRender_BackgroundRectangles(t *testing.T) {
 	config := renderer.DefaultConfig()
 	r := New(config)
 
@@ -303,17 +303,21 @@ func TestRender_BackgroundFilters(t *testing.T) {
 		Frames: []ir.Frame{},
 	}
 
-	// Register a background color
 	bgPalette := termcolor.Standard()
-	bgID := rec.Colors.Register(termcolor.FromRGB(0, 0, 255), &bgPalette)
+	blueID := rec.Colors.Register(termcolor.FromRGB(0, 0, 255), &bgPalette)
+	redID := rec.Colors.Register(termcolor.FromRGB(255, 0, 0), &bgPalette)
+	unusedID := rec.Colors.Register(termcolor.FromRGB(0, 255, 0), &bgPalette)
 
 	rec.Frames = []ir.Frame{
 		{
 			Time:  0,
 			Index: 0,
 			Rows: []ir.Row{
-				{Y: 0, Runs: []ir.TextRun{
-					{Text: "WithBG", StartCol: 0, Attrs: ir.CellAttrs{BG: bgID}},
+				{Y: 1, Runs: []ir.TextRun{
+					{Text: "界", StartCol: 1, EndCol: 3, Attrs: ir.CellAttrs{BG: blueID}},
+					{Text: "B", StartCol: 3, EndCol: 4, Attrs: ir.CellAttrs{FG: redID, BG: blueID, Bold: true}},
+					{Text: "C", StartCol: 4, EndCol: 5, Attrs: ir.CellAttrs{BG: redID}},
+					{Text: "D", StartCol: 6, EndCol: 7, Attrs: ir.CellAttrs{BG: redID}},
 				}},
 			},
 		},
@@ -327,17 +331,80 @@ func TestRender_BackgroundFilters(t *testing.T) {
 
 	svg := buf.String()
 
-	// Check filter is defined
-	if !strings.Contains(svg, `<filter id="bg_`) {
-		t.Error("SVG missing background filter definition")
+	for _, forbidden := range []string{"<filter", "feFlood", "feComposite", "filter="} {
+		if strings.Contains(svg, forbidden) {
+			t.Errorf("SVG contains removed background filter markup %q", forbidden)
+		}
 	}
-	if !strings.Contains(svg, `feFlood`) {
-		t.Error("SVG missing feFlood in filter")
+	for _, want := range []string{
+		`<rect class="a" x="12" y="25" width="36" height="25"/>`,
+		`<rect class="b" x="48" y="25" width="12" height="25"/>`,
+		`<rect class="b" x="72" y="25" width="12" height="25"/>`,
+	} {
+		if !strings.Contains(svg, want) {
+			t.Errorf("SVG missing background rectangle %q", want)
+		}
 	}
+	if strings.Contains(svg, `.`+rec.Colors.GenerateClassNames()[unusedID]+`{fill:#00FF00}`) {
+		t.Error("SVG emitted CSS for an unused registered color")
+	}
+	if strings.Index(svg, `<rect class="a"`) > strings.Index(svg, `<text x="12"`) {
+		t.Error("background rectangle was emitted after foreground text")
+	}
+}
 
-	// Check filter is applied
-	if !strings.Contains(svg, `filter="url(#bg_`) {
-		t.Error("SVG missing filter reference on text")
+func TestRender_BackgroundUsesRuneCountWhenEndColUnset(t *testing.T) {
+	rec := createTestRecording()
+	palette := termcolor.Standard()
+	bgID := rec.Colors.Register(termcolor.FromRGB(0, 0, 255), &palette)
+	rec.Frames = []ir.Frame{{Rows: []ir.Row{{Y: 0, Runs: []ir.TextRun{{Text: "界", StartCol: 2, Attrs: ir.CellAttrs{BG: bgID}}}}}}}
+
+	var buf bytes.Buffer
+	if err := New(renderer.DefaultConfig()).Render(context.Background(), rec, &buf); err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if !strings.Contains(buf.String(), `<rect class="a" x="24" y="0" width="12" height="25"/>`) {
+		t.Fatal("manual TextRun did not use rune-count background fallback")
+	}
+}
+
+func TestRender_ColoredWhitespace(t *testing.T) {
+	rec := createTestRecording()
+	palette := termcolor.Standard()
+	bgID := rec.Colors.Register(termcolor.FromRGB(0, 0, 255), &palette)
+	rec.Frames = []ir.Frame{{Rows: []ir.Row{{Y: 0, Runs: []ir.TextRun{
+		{Text: "  ", StartCol: 0, EndCol: 2, Attrs: ir.CellAttrs{BG: bgID}},
+		{Text: " ", StartCol: 2, EndCol: 3, Attrs: ir.CellAttrs{BG: bgID, Underline: true}},
+	}}}}}
+	rec.Stats.HasUnderline = true
+
+	var buf bytes.Buffer
+	if err := New(renderer.DefaultConfig()).Render(context.Background(), rec, &buf); err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	svg := buf.String()
+	if strings.Count(svg, "<text") != 1 || !strings.Contains(svg, `class="underline"> </text>`) {
+		t.Fatalf("colored whitespace text output = %q", svg)
+	}
+	if !strings.Contains(svg, `<rect class="a" x="0" y="0" width="36" height="25"/>`) {
+		t.Fatal("colored whitespace backgrounds were not merged")
+	}
+}
+
+func TestRender_IsDeterministic(t *testing.T) {
+	rec := createTestRecording()
+	var first bytes.Buffer
+	if err := New(renderer.DefaultConfig()).Render(context.Background(), rec, &first); err != nil {
+		t.Fatalf("first Render() error = %v", err)
+	}
+	for range 3 {
+		var next bytes.Buffer
+		if err := New(renderer.DefaultConfig()).Render(context.Background(), rec, &next); err != nil {
+			t.Fatalf("Render() error = %v", err)
+		}
+		if !bytes.Equal(first.Bytes(), next.Bytes()) {
+			t.Fatal("repeated rendering produced different SVG bytes")
+		}
 	}
 }
 
@@ -596,9 +663,13 @@ func TestIntegration_256Colors(t *testing.T) {
 		t.Errorf("Expected many unique colors for 256color demo, got %d", rec.Stats.UniqueColors)
 	}
 
-	// Verify background filters exist (256 color demo uses background colors)
-	if !strings.Contains(svg, `<filter id="bg_`) {
-		t.Error("SVG missing background filters for 256 color demo")
+	if !strings.Contains(svg, `<rect class="`) {
+		t.Error("SVG missing background rectangles for 256 color demo")
+	}
+	for _, forbidden := range []string{"<filter", "feFlood", "feComposite", "filter="} {
+		if strings.Contains(svg, forbidden) {
+			t.Errorf("SVG contains removed background filter markup %q", forbidden)
+		}
 	}
 
 	t.Logf("Generated SVG: %d bytes, %d frames, %d unique colors",

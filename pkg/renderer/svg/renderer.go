@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/mrmarble/termsvg/pkg/color"
 	"github.com/mrmarble/termsvg/pkg/ir"
@@ -32,6 +34,12 @@ type renderedRow struct {
 	svg   string
 	count int
 	id    string
+}
+
+type backgroundSpan struct {
+	startCol int
+	endCol   int
+	colorID  color.ID
 }
 
 // Layout constants for SVG rendering
@@ -140,7 +148,6 @@ func (c *canvas) render(ctx context.Context) error {
 	fmt.Fprintf(c.w, `<g transform="translate(%d,%d)" clip-path="url(#clip)">`, Padding, contentY)
 
 	c.writeStyles()
-	c.writeBGFilters()
 
 	// Animation group
 	duration := c.rec.Duration.Seconds()
@@ -200,7 +207,8 @@ func (c *canvas) writeStyles() {
 	fmt.Fprintf(&sb, ".cursor{fill:%s;animation:blink 1s step-end infinite}", fgHex)
 
 	// Color classes
-	for id, rgba := range c.rec.Colors.All() {
+	for _, id := range c.visibleColorIDs() {
+		rgba := c.rec.Colors.Resolved(id)
 		className := c.classNames[id]
 		hex := color.RGBAtoHex(rgba)
 		fmt.Fprintf(&sb, ".%s{fill:%s}", className, hex)
@@ -224,6 +232,28 @@ func (c *canvas) writeStyles() {
 	fmt.Fprint(c.w, sb.String())
 }
 
+func (c *canvas) visibleColorIDs() []color.ID {
+	used := make(map[color.ID]bool)
+	for _, frame := range c.rec.Frames {
+		for _, row := range frame.Rows {
+			for _, run := range row.Runs {
+				if !c.rec.Colors.IsDefault(run.Attrs.BG) && runEndCol(run) > run.StartCol {
+					used[run.Attrs.BG] = true
+				}
+				if shouldRenderText(run) && !c.rec.Colors.IsDefault(run.Attrs.FG) {
+					used[run.Attrs.FG] = true
+				}
+			}
+		}
+	}
+	ids := make([]color.ID, 0, len(used))
+	for id := range used {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	return ids
+}
+
 func (c *canvas) generateKeyframes() string {
 	if len(c.rec.Frames) <= 1 {
 		return "@keyframes k{0%{transform:translateX(0)}}"
@@ -243,34 +273,6 @@ func (c *canvas) generateKeyframes() string {
 
 	sb.WriteString("}")
 	return sb.String()
-}
-
-func (c *canvas) writeBGFilters() {
-	// Collect unique background colors used in frames
-	bgColors := make(map[color.ID]bool)
-	for _, frame := range c.rec.Frames {
-		for _, row := range frame.Rows {
-			for _, run := range row.Runs {
-				if !c.rec.Colors.IsDefault(run.Attrs.BG) {
-					bgColors[run.Attrs.BG] = true
-				}
-			}
-		}
-	}
-
-	if len(bgColors) == 0 {
-		return
-	}
-
-	fmt.Fprint(c.w, "<defs>")
-	for id := range bgColors {
-		rgba := c.rec.Colors.Resolved(id)
-		hex := color.RGBAtoHex(rgba)
-		fmt.Fprintf(c.w, `<filter id="bg_%d" x="0" y="0" width="1" height="1">`, id)
-		fmt.Fprintf(c.w, `<feFlood flood-color="%s"/><feComposite in="SourceGraphic" operator="over"/>`, hex)
-		fmt.Fprint(c.w, `</filter>`)
-	}
-	fmt.Fprint(c.w, "</defs>")
 }
 
 func (c *canvas) collectRows() ([][]*renderedRow, []*renderedRow) {
@@ -337,9 +339,41 @@ func (c *canvas) writeFrames(frameRows [][]*renderedRow) {
 }
 
 func (c *canvas) writeRow(w io.Writer, row ir.Row) {
+	for _, span := range c.backgroundSpans(row) {
+		fmt.Fprintf(w, `<rect class="%s" x="%d" y="%d" width="%d" height="%d"/>`,
+			c.classNames[span.colorID], span.startCol*ColWidth, row.Y*RowHeight,
+			(span.endCol-span.startCol)*ColWidth, RowHeight)
+	}
 	for _, run := range row.Runs {
 		c.writeTextRun(w, run, row.Y)
 	}
+}
+
+func (c *canvas) backgroundSpans(row ir.Row) []backgroundSpan {
+	spans := make([]backgroundSpan, 0, len(row.Runs))
+	for _, run := range row.Runs {
+		endCol := runEndCol(run)
+		if c.rec.Colors.IsDefault(run.Attrs.BG) || endCol <= run.StartCol {
+			continue
+		}
+		if len(spans) > 0 && spans[len(spans)-1].colorID == run.Attrs.BG && spans[len(spans)-1].endCol == run.StartCol {
+			spans[len(spans)-1].endCol = endCol
+			continue
+		}
+		spans = append(spans, backgroundSpan{startCol: run.StartCol, endCol: endCol, colorID: run.Attrs.BG})
+	}
+	return spans
+}
+
+func runEndCol(run ir.TextRun) int {
+	if run.EndCol > run.StartCol {
+		return run.EndCol
+	}
+	return run.StartCol + utf8.RuneCountInString(run.Text)
+}
+
+func shouldRenderText(run ir.TextRun) bool {
+	return run.Text != "" && (strings.TrimSpace(run.Text) != "" || run.Attrs.Underline)
 }
 
 func (c *canvas) writeCursor(cursor ir.Cursor) {
@@ -352,12 +386,7 @@ func (c *canvas) writeCursor(cursor ir.Cursor) {
 }
 
 func (c *canvas) writeTextRun(w io.Writer, run ir.TextRun, rowY int) {
-	if run.Text == "" {
-		return
-	}
-
-	// Skip whitespace-only runs with default background - nothing visible to render
-	if strings.TrimSpace(run.Text) == "" && c.rec.Colors.IsDefault(run.Attrs.BG) && !run.Attrs.Underline {
+	if !shouldRenderText(run) {
 		return
 	}
 
@@ -395,11 +424,6 @@ func (c *canvas) writeTextRun(w io.Writer, run ir.TextRun, rowY int) {
 		classAttr = fmt.Sprintf(" class=%q", strings.Join(classes, " "))
 	}
 
-	filterAttr := ""
-	if !c.rec.Colors.IsDefault(run.Attrs.BG) {
-		filterAttr = fmt.Sprintf(` filter="url(#bg_%d)"`, run.Attrs.BG)
-	}
-
-	fmt.Fprintf(w, `<text x="%d" y="%d" xml:space="preserve"%s%s>%s</text>`,
-		x, y, classAttr, filterAttr, html.EscapeString(text))
+	fmt.Fprintf(w, `<text x="%d" y="%d" xml:space="preserve"%s>%s</text>`,
+		x, y, classAttr, html.EscapeString(text))
 }
