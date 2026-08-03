@@ -30,16 +30,21 @@ func TestMeasureCSSSemantics(t *testing.T) {
 	raw := []byte(`<svg><style>
 /* @keyframes ignored{0%{}} translateX(999px) */ .moving { animation: k 1s; filter: url(#f) }
 .idle { animation-delay: 1s; content: "translateX(999px)" }
-@keyframes one { from, 50% { content:"} 99%"; transform:translateX(+1e2px) } to, 50.0% { transform:translate(-2.5e1px,+3e1px) } }
-@keyframes two { from { opacity:0 } to { opacity:1 } }
-</style><g class="moving"><rect filter="url(#f)"/></g><g class="idle"/><g><animateTransform attributeName="transform"/></g><g style="animation:k 1s"><use href="#r"/></g></svg>`)
+	@keyframes one { from, 50% { content:"} 99%";
+	transform:translateX(+1e2px) } to, 50.0% {
+	transform:translate(-2.5e1px,+3e1px) } }
+	@keyframes two { from { opacity:0 } to { opacity:1 } }
+	</style><g class="moving"><rect filter="url(#f)"/></g><g class="idle"/>
+	<g><animateTransform attributeName="transform"/></g>
+	<g style="animation:k 1s"><use href="#r"/></g></svg>`)
 
 	m, err := measure(raw, raw)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if m.FilterRefs != 2 || m.Keyframes != 2 || m.KeyframeSelectors != 6 || m.DuplicateSelectors != 1 {
-		t.Fatalf("filters/keyframes/selectors/duplicates = %d/%d/%d/%d", m.FilterRefs, m.Keyframes, m.KeyframeSelectors, m.DuplicateSelectors)
+		t.Fatalf("filters/keyframes/selectors/duplicates = %d/%d/%d/%d",
+			m.FilterRefs, m.Keyframes, m.KeyframeSelectors, m.DuplicateSelectors)
 	}
 	if m.MaxTranslate != 100 || m.AnimatedGroups != 3 {
 		t.Fatalf("max translate/animated groups = %g/%d", m.MaxTranslate, m.AnimatedGroups)
@@ -47,7 +52,9 @@ func TestMeasureCSSSemantics(t *testing.T) {
 }
 
 func TestMeasureUsesOnlyTranslateXComponent(t *testing.T) {
-	raw := []byte(`<svg><style>.x{transform:translate(+1e2px,-900px) translate3d(-2.5e2px,800px,700px) translateX(+3e2px) translateY(999px)}</style><g transform="translate(-4e2,600)"/></svg>`)
+	raw := []byte(`<svg><style>.x{transform:translate(+1e2px,-900px)
+	translate3d(-2.5e2px,800px,700px) translateX(+3e2px)
+	translateY(999px)}</style><g transform="translate(-4e2,600)"/></svg>`)
 	m, err := measure(raw, raw)
 	if err != nil {
 		t.Fatal(err)
@@ -61,7 +68,11 @@ func TestMeasureCountsOnlySoundActiveAnimations(t *testing.T) {
 	raw := []byte(`<svg><style>
 .disabled{animation:none}.named-disabled{animation-name:none}
 .both.required{animation:k 1s}.ancestor .descendant{animation:k 1s}.enabled{animation:k 1s}
-</style><g class="disabled"/><g class="named-disabled"/><g class="both"/><g class="both required"/><g class="descendant"/><g class="ancestor descendant"/><g class="enabled"/><g style="animation:none"/><g style="animation-name:none"/><g style="animation:k 1s"/><g><animate attributeName="opacity"/></g></svg>`)
+	</style><g class="disabled"/><g class="named-disabled"/><g class="both"/>
+	<g class="both required"/><g class="descendant"/>
+	<g class="ancestor descendant"/><g class="enabled"/>
+	<g style="animation:none"/><g style="animation-name:none"/>
+	<g style="animation:k 1s"/><g><animate attributeName="opacity"/></g></svg>`)
 	m, err := measure(raw, raw)
 	if err != nil {
 		t.Fatal(err)
@@ -90,15 +101,15 @@ func TestRunWritesSafeAtomicTSV(t *testing.T) {
 	left := filepath.Join(dir, "left", "same.svg")
 	right := filepath.Join(dir, "right", "same.svg")
 	for _, name := range []string{left, right} {
-		if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(name), 0o750); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(name, []byte(`<svg><text>ok</text></svg>`), 0o644); err != nil {
+		if err := os.WriteFile(name, []byte(`<svg><text>ok</text></svg>`), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	minified := filepath.Join(dir, "min\tified.svg")
-	if err := os.WriteFile(minified, []byte("<svg>\n</svg>"), 0o644); err != nil {
+	minified := filepath.Join(dir, "min") + "\tified.svg"
+	if err := os.WriteFile(minified, []byte("<svg>\n</svg>"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -124,7 +135,9 @@ func TestRunWritesSafeAtomicTSV(t *testing.T) {
 	}
 
 	var partial bytes.Buffer
-	if err := run([]string{"-minified", left + "=" + minified, left, filepath.Join(dir, "missing.svg")}, &partial); err == nil || partial.Len() != 0 {
+	missing := filepath.Join(dir, "missing.svg")
+	args = []string{"-minified", left + "=" + minified, left, missing}
+	if err := run(args, &partial); err == nil || partial.Len() != 0 {
 		t.Fatalf("error/partial output = %v/%q", err, partial.String())
 	}
 }

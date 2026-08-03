@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"encoding/csv"
 	"encoding/xml"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -17,11 +18,6 @@ import (
 
 	"github.com/tdewolff/parse/v2"
 	"github.com/tdewolff/parse/v2/css"
-)
-
-var (
-	translateRE = regexp.MustCompile(`(?i)translate(x|y|3d)?\(([^)]*)\)`)
-	numberRE    = regexp.MustCompile(`[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?`)
 )
 
 type metrics struct {
@@ -49,6 +45,19 @@ type groupInfo struct {
 	smilAnimation   bool
 }
 
+type declarationMetrics struct {
+	filters    int
+	animated   bool
+	transforms []string
+}
+
+type pairs map[string]string
+
+var (
+	translateRE = regexp.MustCompile(`(?i)translate(x|y|3d)?\(([^)]*)\)`)
+	numberRE    = regexp.MustCompile(`[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?`)
+)
+
 func measure(raw, minified []byte) (metrics, error) {
 	result := metrics{RawBytes: len(raw), MinifiedBytes: len(minified), Tags: map[string]int{}}
 	if err := validXML(minified); err != nil {
@@ -64,17 +73,34 @@ func measure(raw, minified []byte) (metrics, error) {
 	}
 	result.GzipBytes = compressed.Len()
 
-	var styles, transforms []string
-	var groups []groupInfo
+	styles, transforms, groups, err := scanSVG(raw, &result)
+	if err != nil {
+		return result, err
+	}
+	selectors, err := addStyleMetrics(styles, &result, &transforms)
+	if err != nil {
+		return result, err
+	}
+	result.AnimatedGroups = countAnimatedGroups(groups, selectors)
+	maximum, err := maxTranslate(transforms)
+	if err != nil {
+		return result, err
+	}
+	result.MaxTranslate = maximum
+	return result, nil
+}
+
+//nolint:gocognit,funlen // Stateful XML scan keeps parent, group, style, and transform state synchronized.
+func scanSVG(raw []byte, result *metrics) (styles, transforms []string, groups []groupInfo, err error) {
 	var parents []int
 	decoder := xml.NewDecoder(bytes.NewReader(raw))
 	for {
 		token, err := decoder.Token()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
-			return result, err
+			return nil, nil, nil, err
 		}
 		switch token := token.(type) {
 		case xml.StartElement:
@@ -100,7 +126,7 @@ func measure(raw, minified []byte) (metrics, error) {
 				case "style":
 					analysis, err := analyzeDeclarations(attr.Value)
 					if err != nil {
-						return result, err
+						return nil, nil, nil, err
 					}
 					result.FilterRefs += analysis.filters
 					if token.Name.Local == "g" && analysis.animated {
@@ -111,13 +137,13 @@ func measure(raw, minified []byte) (metrics, error) {
 					transforms = append(transforms, attr.Value)
 				}
 			}
-			if (token.Name.Local == "animate" || token.Name.Local == "animateTransform" || token.Name.Local == "animateMotion") && parent >= 0 {
+			if parent >= 0 && isSMILAnimation(token.Name.Local) {
 				groups[parent].smilAnimation = true
 			}
 			if token.Name.Local == "style" {
 				var text string
 				if err := decoder.DecodeElement(&text, &token); err != nil {
-					return result, err
+					return nil, nil, nil, err
 				}
 				parents = parents[:len(parents)-1]
 				styles = append(styles, text)
@@ -126,31 +152,39 @@ func measure(raw, minified []byte) (metrics, error) {
 			parents = parents[:len(parents)-1]
 		}
 	}
+	return styles, transforms, groups, nil
+}
 
-	var animatedSelectors [][]string
+func addStyleMetrics(styles []string, result *metrics, transforms *[]string) ([][]string, error) {
+	var selectors [][]string
 	for _, text := range styles {
 		m, err := analyzeCSS(text)
 		if err != nil {
-			return result, err
+			return nil, err
 		}
 		result.FilterRefs += m.filters
 		result.Keyframes += m.keyframes
 		result.KeyframeSelectors += m.selectors
 		result.DuplicateSelectors += m.duplicates
-		animatedSelectors = append(animatedSelectors, m.animatedSelectors...)
+		selectors = append(selectors, m.animatedSelectors...)
 		values, err := cssTransforms(text)
 		if err != nil {
-			return result, err
+			return nil, err
 		}
-		transforms = append(transforms, values...)
+		*transforms = append(*transforms, values...)
 	}
+	return selectors, nil
+}
+
+func countAnimatedGroups(groups []groupInfo, selectors [][]string) int {
+	count := 0
 	for _, group := range groups {
 		animated := group.inlineAnimation || group.smilAnimation
 		classes := map[string]bool{}
 		for _, class := range group.classes {
 			classes[class] = true
 		}
-		for _, selector := range animatedSelectors {
+		for _, selector := range selectors {
 			matches := true
 			for _, class := range selector {
 				matches = matches && classes[class]
@@ -158,9 +192,14 @@ func measure(raw, minified []byte) (metrics, error) {
 			animated = animated || matches
 		}
 		if animated {
-			result.AnimatedGroups++
+			count++
 		}
 	}
+	return count
+}
+
+func maxTranslate(transforms []string) (float64, error) {
+	var maximum float64
 	for _, text := range transforms {
 		for _, call := range translateRE.FindAllStringSubmatch(text, -1) {
 			if strings.EqualFold(call[1], "y") {
@@ -169,24 +208,24 @@ func measure(raw, minified []byte) (metrics, error) {
 			number := numberRE.FindString(call[2])
 			value, err := strconv.ParseFloat(number, 64)
 			if err != nil {
-				return result, err
+				return 0, err
 			}
 			if value < 0 {
 				value = -value
 			}
-			if value > result.MaxTranslate {
-				result.MaxTranslate = value
+			if value > maximum {
+				maximum = value
 			}
 		}
 	}
-	return result, nil
+	return maximum, nil
 }
 
 func validXML(data []byte) error {
 	decoder := xml.NewDecoder(bytes.NewReader(data))
 	for {
 		if _, err := decoder.Token(); err != nil {
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				return nil
 			}
 			return err
@@ -202,7 +241,7 @@ func lexCSS(text string) ([]cssToken, error) {
 	for {
 		typeID, data := lexer.Next()
 		if typeID == css.ErrorToken {
-			if lexer.Err() == io.EOF {
+			if errors.Is(lexer.Err(), io.EOF) {
 				break
 			}
 			return nil, lexer.Err()
@@ -232,6 +271,11 @@ func lexCSS(text string) ([]cssToken, error) {
 	return tokens, nil
 }
 
+func isSMILAnimation(name string) bool {
+	return name == "animate" || name == "animateTransform" || name == "animateMotion"
+}
+
+//nolint:gocognit,funlen // Stateful CSS token traversal tracks nested keyframes and rules.
 func analyzeCSS(text string) (cssMetrics, error) {
 	tokens, err := lexCSS(text)
 	if err != nil {
@@ -239,7 +283,8 @@ func analyzeCSS(text string) (cssMetrics, error) {
 	}
 	var result cssMetrics
 	for i := 0; i < len(tokens); i++ {
-		if tokens[i].typeID == css.IdentToken && strings.EqualFold(tokens[i].text, "filter") && i+1 < len(tokens) && tokens[i+1].typeID == css.ColonToken {
+		if i+1 < len(tokens) && tokens[i].typeID == css.IdentToken &&
+			strings.EqualFold(tokens[i].text, "filter") && tokens[i+1].typeID == css.ColonToken {
 			result.filters++
 		}
 		if tokens[i].typeID != css.AtKeywordToken || !strings.EqualFold(tokens[i].text, "@keyframes") {
@@ -257,16 +302,22 @@ func analyzeCSS(text string) (cssMetrics, error) {
 			token := tokens[i]
 			if depth == 1 {
 				selector := ""
-				if token.typeID == css.PercentageToken {
+				//nolint:exhaustive // Only CSS percentage and from/to tokens are selectors here.
+				switch token.typeID {
+				case css.PercentageToken:
 					value, err := strconv.ParseFloat(strings.TrimSuffix(token.text, "%"), 64)
 					if err != nil {
 						return result, err
 					}
 					selector = strconv.FormatFloat(value, 'g', -1, 64) + "%"
-				} else if token.typeID == css.IdentToken && strings.EqualFold(token.text, "from") {
-					selector = "0%"
-				} else if token.typeID == css.IdentToken && strings.EqualFold(token.text, "to") {
-					selector = "100%"
+				case css.IdentToken:
+					switch {
+					case strings.EqualFold(token.text, "from"):
+						selector = "0%"
+					case strings.EqualFold(token.text, "to"):
+						selector = "100%"
+					}
+				default:
 				}
 				if selector != "" {
 					result.selectors++
@@ -276,10 +327,13 @@ func analyzeCSS(text string) (cssMetrics, error) {
 					seen[selector] = true
 				}
 			}
-			if token.typeID == css.LeftBraceToken {
+			//nolint:exhaustive // Only braces change the keyframe nesting depth.
+			switch token.typeID {
+			case css.LeftBraceToken:
 				depth++
-			} else if token.typeID == css.RightBraceToken {
+			case css.RightBraceToken:
 				depth--
+			default:
 			}
 		}
 		i--
@@ -295,10 +349,13 @@ func analyzeCSS(text string) (cssMetrics, error) {
 		}
 		depth, end := 1, open+1
 		for ; end < len(tokens) && depth > 0; end++ {
-			if tokens[end].typeID == css.LeftBraceToken {
+			//nolint:exhaustive // Only braces change the rule nesting depth.
+			switch tokens[end].typeID {
+			case css.LeftBraceToken:
 				depth++
-			} else if tokens[end].typeID == css.RightBraceToken {
+			case css.RightBraceToken:
 				depth--
+			default:
 			}
 		}
 		_, animated := activeAnimation(tokens[open+1 : end-1])
@@ -308,12 +365,6 @@ func analyzeCSS(text string) (cssMetrics, error) {
 		start = end
 	}
 	return result, nil
-}
-
-type declarationMetrics struct {
-	filters    int
-	animated   bool
-	transforms []string
 }
 
 func analyzeDeclarations(text string) (declarationMetrics, error) {
@@ -332,17 +383,19 @@ func analyzeDeclarations(text string) (declarationMetrics, error) {
 		}
 	}
 	_, result.animated = activeAnimation(tokens)
-	result.transforms, err = cssTransforms(text)
-	return result, nil
+	transforms, err := cssTransforms(text)
+	result.transforms = transforms
+	return result, err
 }
 
+//nolint:lll // CSS animation property spellings are clearer as direct comparisons.
 func isAnimationProperty(name string) bool {
 	name = strings.ToLower(name)
 	return name == "animation" || name == "animation-name" || name == "-webkit-animation" || name == "-webkit-animation-name"
 }
 
-func activeAnimation(tokens []cssToken) (bool, bool) {
-	seen, active := false, false
+//nolint:lll // Token boundary checks mirror CSS declaration syntax.
+func activeAnimation(tokens []cssToken) (seen, active bool) {
 	for i := 0; i+1 < len(tokens); i++ {
 		if tokens[i].typeID != css.IdentToken || tokens[i+1].typeID != css.ColonToken || !isAnimationProperty(tokens[i].text) {
 			continue
@@ -358,6 +411,7 @@ func activeAnimation(tokens []cssToken) (bool, bool) {
 	return seen, active
 }
 
+//nolint:lll // CSS animation keywords are clearer as a single exhaustive list.
 func animationName(name string) bool {
 	switch name {
 	case "none", "initial", "inherit", "unset", "revert", "revert-layer", "infinite", "linear", "ease", "ease-in", "ease-out", "ease-in-out", "step-start", "step-end", "running", "paused", "normal", "reverse", "alternate", "alternate-reverse", "forwards", "backwards", "both":
@@ -367,6 +421,7 @@ func animationName(name string) bool {
 	}
 }
 
+//nolint:lll // Selector validation mirrors the compact token-pair grammar.
 func simpleClassSelectors(tokens []cssToken) [][]string {
 	var selectors [][]string
 	for start := 0; start < len(tokens); {
@@ -390,6 +445,7 @@ func simpleClassSelectors(tokens []cssToken) [][]string {
 	return selectors
 }
 
+//nolint:lll // Token boundary checks mirror CSS declaration syntax.
 func cssTransforms(text string) ([]string, error) {
 	tokens, err := lexCSS(text)
 	if err != nil {
@@ -411,8 +467,6 @@ func cssTransforms(text string) ([]string, error) {
 	return values, nil
 }
 
-type pairs map[string]string
-
 func (p pairs) String() string { return "raw.svg=minified.svg" }
 func (p pairs) Set(value string) error {
 	raw, minified, ok := strings.Cut(value, "=")
@@ -423,6 +477,7 @@ func (p pairs) Set(value string) error {
 	return nil
 }
 
+//nolint:funlen,lll // TSV schema and record order are intentionally explicit and stable.
 func run(args []string, stdout io.Writer) error {
 	set := flag.NewFlagSet("svgmetrics", flag.ContinueOnError)
 	set.SetOutput(io.Discard)
@@ -440,10 +495,12 @@ func run(args []string, stdout io.Writer) error {
 		if !ok {
 			return fmt.Errorf("%s: missing -minified pair", name)
 		}
+		//nolint:gosec // CLI accepts explicit SVG paths supplied by the caller.
 		raw, err := os.ReadFile(name)
 		if err != nil {
 			return err
 		}
+		//nolint:gosec // CLI accepts the explicit paired minified SVG path.
 		minified, err := os.ReadFile(minifiedName)
 		if err != nil {
 			return err
@@ -466,7 +523,12 @@ func run(args []string, stdout io.Writer) error {
 	var output bytes.Buffer
 	w := csv.NewWriter(&output)
 	w.Comma = '\t'
-	w.WriteAll(records)
+	for _, record := range records {
+		if err := w.Write(record); err != nil {
+			return err
+		}
+	}
+	w.Flush()
 	if err := w.Error(); err != nil {
 		return err
 	}
