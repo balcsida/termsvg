@@ -17,6 +17,9 @@ func TestBuildRowBandsUsesLocalHorizontalBounds(t *testing.T) {
 	}
 
 	bands := buildRowBands(&plan, 78, 17)
+	if run := plan.content.points[0].state[0].Runs[0]; run.StartCol != 10 || run.EndCol != 11 {
+		t.Fatalf("source run was mutated: %+v", run)
+	}
 
 	if len(bands) != 1 {
 		t.Fatalf("bands = %d; want 1", len(bands))

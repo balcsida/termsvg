@@ -64,6 +64,7 @@ func combineRowLanes(lanes []rowLane) rowBand {
 			if len(row.Runs) == 0 {
 				continue
 			}
+			row.Runs = slices.Clone(row.Runs)
 			row.Y = lane.y - startY
 			rows = append(rows, row)
 		}
