@@ -72,6 +72,23 @@ func TestWriteOutputPropagatesDestinationError(t *testing.T) {
 	}
 }
 
+func TestWriteOutputPropagatesBufferedFlushError(t *testing.T) {
+	wantErr := errors.New("flush failed")
+	dst := &countingErrorWriter{err: wantErr}
+	rdr := rendererFunc(func(w io.Writer) error {
+		_, err := io.WriteString(w, `<svg xmlns="http://www.w3.org/2000/svg"/>`)
+		return err
+	})
+
+	err := writeOutput(context.Background(), rdr, nil, dst, true)
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("writeOutput() error = %v, want %v", err, wantErr)
+	}
+	if dst.writes != 1 {
+		t.Fatalf("destination writes = %d, want 1 flush write", dst.writes)
+	}
+}
+
 func TestWriteOutputPropagatesRenderError(t *testing.T) {
 	wantErr := errors.New("render failed")
 	rdr := rendererFunc(func(io.Writer) error { return wantErr })
@@ -277,6 +294,59 @@ func TestWriteOutputLeavesNonMinifiedBytesUnchanged(t *testing.T) {
 	}
 }
 
+func TestWriteOutputFilePropagatesCloseError(t *testing.T) {
+	wantErr := errors.New("close failed")
+	dst := &closeErrorWriter{err: wantErr}
+	rdr := rendererFunc(func(w io.Writer) error {
+		_, err := io.WriteString(w, "output")
+		return err
+	})
+
+	err := writeOutputFile(context.Background(), rdr, nil, dst, false)
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("writeOutputFile() error = %v, want %v", err, wantErr)
+	}
+	if !dst.closed {
+		t.Fatal("writeOutputFile() did not close destination")
+	}
+}
+
+func TestWriteOutputFileJoinsRenderAndCloseErrors(t *testing.T) {
+	renderErr := errors.New("render failed")
+	closeErr := errors.New("close failed")
+	dst := &closeErrorWriter{err: closeErr}
+	rdr := rendererFunc(func(io.Writer) error { return renderErr })
+
+	err := writeOutputFile(context.Background(), rdr, nil, dst, false)
+	if !errors.Is(err, renderErr) || !errors.Is(err, closeErr) {
+		t.Fatalf("writeOutputFile() error = %v, want both %v and %v", err, renderErr, closeErr)
+	}
+	if !dst.closed {
+		t.Fatal("writeOutputFile() did not close destination")
+	}
+}
+
 type errorWriter struct{ err error }
 
 func (w errorWriter) Write([]byte) (int, error) { return 0, w.err }
+
+type countingErrorWriter struct {
+	err    error
+	writes int
+}
+
+func (w *countingErrorWriter) Write([]byte) (int, error) {
+	w.writes++
+	return 0, w.err
+}
+
+type closeErrorWriter struct {
+	bytes.Buffer
+	err    error
+	closed bool
+}
+
+func (w *closeErrorWriter) Close() error {
+	w.closed = true
+	return w.err
+}

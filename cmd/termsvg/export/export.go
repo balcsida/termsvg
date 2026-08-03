@@ -124,6 +124,16 @@ func writeOutput(
 	return errors.Join(renderErr, minified.Close(), spaces.Close(), buf.Flush())
 }
 
+func writeOutputFile(
+	ctx context.Context,
+	rdr renderer.Renderer,
+	rec *ir.Recording,
+	dst io.WriteCloser,
+	minifySVG bool,
+) error {
+	return errors.Join(writeOutput(ctx, rdr, rec, dst, minifySVG), dst.Close())
+}
+
 //nolint:funlen,gocognit // sequential export steps are clearer in one function
 func (cmd *Cmd) Run() error {
 	format := strings.ToLower(cmd.Format)
@@ -244,9 +254,8 @@ func (cmd *Cmd) Run() error {
 	if err != nil {
 		return err
 	}
-	defer outFile.Close()
 
-	if err := writeOutput(context.Background(), rdr, rec, outFile, cmd.Minify && format == "svg"); err != nil {
+	if err := writeOutputFile(context.Background(), rdr, rec, outFile, cmd.Minify && format == "svg"); err != nil {
 		return err
 	}
 
