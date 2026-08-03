@@ -35,11 +35,12 @@ type metrics struct {
 type cssToken struct {
 	typeID css.TokenType
 	text   string
+	spaced bool
 }
 
 type cssMetrics struct {
 	filters, keyframes, selectors, duplicates int
-	animatedClasses                           map[string]bool
+	animatedSelectors                         [][]string
 }
 
 type groupInfo struct {
@@ -126,7 +127,7 @@ func measure(raw, minified []byte) (metrics, error) {
 		}
 	}
 
-	animatedClasses := map[string]bool{}
+	var animatedSelectors [][]string
 	for _, text := range styles {
 		m, err := analyzeCSS(text)
 		if err != nil {
@@ -136,9 +137,7 @@ func measure(raw, minified []byte) (metrics, error) {
 		result.Keyframes += m.keyframes
 		result.KeyframeSelectors += m.selectors
 		result.DuplicateSelectors += m.duplicates
-		for class := range m.animatedClasses {
-			animatedClasses[class] = true
-		}
+		animatedSelectors = append(animatedSelectors, m.animatedSelectors...)
 		values, err := cssTransforms(text)
 		if err != nil {
 			return result, err
@@ -147,8 +146,16 @@ func measure(raw, minified []byte) (metrics, error) {
 	}
 	for _, group := range groups {
 		animated := group.inlineAnimation || group.smilAnimation
+		classes := map[string]bool{}
 		for _, class := range group.classes {
-			animated = animated || animatedClasses[class]
+			classes[class] = true
+		}
+		for _, selector := range animatedSelectors {
+			matches := true
+			for _, class := range selector {
+				matches = matches && classes[class]
+			}
+			animated = animated || matches
 		}
 		if animated {
 			result.AnimatedGroups++
@@ -191,6 +198,7 @@ func lexCSS(text string) ([]cssToken, error) {
 	lexer := css.NewLexer(parse.NewInputString(text))
 	var tokens []cssToken
 	depth := 0
+	spaced := false
 	for {
 		typeID, data := lexer.Next()
 		if typeID == css.ErrorToken {
@@ -199,7 +207,11 @@ func lexCSS(text string) ([]cssToken, error) {
 			}
 			return nil, lexer.Err()
 		}
-		if typeID == css.WhitespaceToken || typeID == css.CommentToken {
+		if typeID == css.WhitespaceToken {
+			spaced = true
+			continue
+		}
+		if typeID == css.CommentToken {
 			continue
 		}
 		if typeID == css.LeftBraceToken {
@@ -211,7 +223,8 @@ func lexCSS(text string) ([]cssToken, error) {
 				return nil, fmt.Errorf("unbalanced CSS braces")
 			}
 		}
-		tokens = append(tokens, cssToken{typeID, string(data)})
+		tokens = append(tokens, cssToken{typeID: typeID, text: string(data), spaced: spaced})
+		spaced = false
 	}
 	if depth != 0 {
 		return nil, fmt.Errorf("unbalanced CSS braces")
@@ -224,7 +237,7 @@ func analyzeCSS(text string) (cssMetrics, error) {
 	if err != nil {
 		return cssMetrics{}, err
 	}
-	result := cssMetrics{animatedClasses: map[string]bool{}}
+	var result cssMetrics
 	for i := 0; i < len(tokens); i++ {
 		if tokens[i].typeID == css.IdentToken && strings.EqualFold(tokens[i].text, "filter") && i+1 < len(tokens) && tokens[i+1].typeID == css.ColonToken {
 			result.filters++
@@ -288,16 +301,9 @@ func analyzeCSS(text string) (cssMetrics, error) {
 				depth--
 			}
 		}
-		animated := false
-		for i := open + 1; i+1 < end-1; i++ {
-			animated = animated || (tokens[i].typeID == css.IdentToken && isAnimationProperty(tokens[i].text) && tokens[i+1].typeID == css.ColonToken)
-		}
+		_, animated := activeAnimation(tokens[open+1 : end-1])
 		if animated {
-			for i := start; i+1 < open; i++ {
-				if tokens[i].typeID == css.DelimToken && tokens[i].text == "." && tokens[i+1].typeID == css.IdentToken {
-					result.animatedClasses[tokens[i+1].text] = true
-				}
-			}
+			result.animatedSelectors = append(result.animatedSelectors, simpleClassSelectors(tokens[start:open])...)
 		}
 		start = end
 	}
@@ -324,8 +330,8 @@ func analyzeDeclarations(text string) (declarationMetrics, error) {
 		if name == "filter" {
 			result.filters++
 		}
-		result.animated = result.animated || isAnimationProperty(name)
 	}
+	_, result.animated = activeAnimation(tokens)
 	result.transforms, err = cssTransforms(text)
 	return result, nil
 }
@@ -333,6 +339,55 @@ func analyzeDeclarations(text string) (declarationMetrics, error) {
 func isAnimationProperty(name string) bool {
 	name = strings.ToLower(name)
 	return name == "animation" || name == "animation-name" || name == "-webkit-animation" || name == "-webkit-animation-name"
+}
+
+func activeAnimation(tokens []cssToken) (bool, bool) {
+	seen, active := false, false
+	for i := 0; i+1 < len(tokens); i++ {
+		if tokens[i].typeID != css.IdentToken || tokens[i+1].typeID != css.ColonToken || !isAnimationProperty(tokens[i].text) {
+			continue
+		}
+		seen = true
+		active = false
+		for i += 2; i < len(tokens) && tokens[i].typeID != css.SemicolonToken && tokens[i].typeID != css.RightBraceToken; i++ {
+			if tokens[i].typeID == css.IdentToken && animationName(strings.ToLower(tokens[i].text)) {
+				active = true
+			}
+		}
+	}
+	return seen, active
+}
+
+func animationName(name string) bool {
+	switch name {
+	case "none", "initial", "inherit", "unset", "revert", "revert-layer", "infinite", "linear", "ease", "ease-in", "ease-out", "ease-in-out", "step-start", "step-end", "running", "paused", "normal", "reverse", "alternate", "alternate-reverse", "forwards", "backwards", "both":
+		return false
+	default:
+		return true
+	}
+}
+
+func simpleClassSelectors(tokens []cssToken) [][]string {
+	var selectors [][]string
+	for start := 0; start < len(tokens); {
+		end := start
+		for end < len(tokens) && tokens[end].typeID != css.CommaToken {
+			end++
+		}
+		var classes []string
+		valid := start < end
+		for i := start; valid && i < end; i += 2 {
+			valid = i+1 < end && tokens[i].typeID == css.DelimToken && tokens[i].text == "." && (i == start || !tokens[i].spaced) && tokens[i+1].typeID == css.IdentToken && !tokens[i+1].spaced
+			if valid {
+				classes = append(classes, tokens[i+1].text)
+			}
+		}
+		if valid {
+			selectors = append(selectors, classes)
+		}
+		start = end + 1
+	}
+	return selectors
 }
 
 func cssTransforms(text string) ([]string, error) {

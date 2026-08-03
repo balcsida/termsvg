@@ -57,6 +57,20 @@ func TestMeasureUsesOnlyTranslateXComponent(t *testing.T) {
 	}
 }
 
+func TestMeasureCountsOnlySoundActiveAnimations(t *testing.T) {
+	raw := []byte(`<svg><style>
+.disabled{animation:none}.named-disabled{animation-name:none}
+.both.required{animation:k 1s}.ancestor .descendant{animation:k 1s}.enabled{animation:k 1s}
+</style><g class="disabled"/><g class="named-disabled"/><g class="both"/><g class="both required"/><g class="descendant"/><g class="ancestor descendant"/><g class="enabled"/><g style="animation:none"/><g style="animation-name:none"/><g style="animation:k 1s"/><g><animate attributeName="opacity"/></g></svg>`)
+	m, err := measure(raw, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.AnimatedGroups != 4 {
+		t.Fatalf("animated groups = %d, want 4", m.AnimatedGroups)
+	}
+}
+
 func TestMeasureRejectsMalformedKeyframes(t *testing.T) {
 	_, err := measure([]byte(`<svg><style>@keyframes k{0%{opacity:0}</style></svg>`), []byte(`<svg/>`))
 	if err == nil || !strings.Contains(err.Error(), "unbalanced") {
