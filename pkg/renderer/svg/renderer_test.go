@@ -825,6 +825,10 @@ func TestRender_PreservesCursorAndTiming(t *testing.T) {
 			t.Errorf("SVG missing preserved frame state %q", want)
 		}
 	}
+	if strings.Count(svg, "@keyframes cursor") != 1 || strings.Count(svg, "animation:cursor") != 1 {
+		t.Fatalf("cursor timelines: keyframes=%d animations=%d, want 1 each",
+			strings.Count(svg, "@keyframes cursor"), strings.Count(svg, "animation:cursor"))
+	}
 }
 
 func TestRender_UsesIndependentContentAndCursorLayers(t *testing.T) {
@@ -861,6 +865,29 @@ func TestRender_UsesIndependentContentAndCursorLayers(t *testing.T) {
 	if staticAt < 0 || dynamicAt < staticAt || cursorAt < dynamicAt {
 		t.Fatalf("paint order static=%d dynamic=%d cursor=%d", staticAt, dynamicAt, cursorAt)
 	}
+	stripAt := strings.Index(svg, `<g style="animation:k`)
+	if stripAt < 0 || strings.Contains(svg[:stripAt], ">A</text>") || strings.Contains(svg[:stripAt], ">B</text>") ||
+		!strings.Contains(svg[stripAt:], ">A</text>") || !strings.Contains(svg[stripAt:], ">B</text>") {
+		t.Fatal("changing A -> B row was not confined to the dynamic strip")
+	}
+}
+
+func TestRender_OneEffectiveContentStateHasNoFrameStrip(t *testing.T) {
+	rec := createTestRecording()
+	rec.Frames[1].Rows = rec.Frames[0].Rows
+	config := renderer.DefaultConfig()
+	config.ShowCursor = false
+
+	var buf bytes.Buffer
+	if err := New(config).Render(context.Background(), rec, &buf); err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	svg := buf.String()
+	for _, forbidden := range []string{"@keyframes k", "animation:k", `<g transform="translate(0,0)">`} {
+		if strings.Contains(svg, forbidden) {
+			t.Errorf("single-state SVG contains %q", forbidden)
+		}
+	}
 }
 
 func TestRender_OmitsAnimationsForStaticAndDisabledCursor(t *testing.T) {
@@ -895,6 +922,27 @@ func TestRender_ZeroDurationUsesFinalContentState(t *testing.T) {
 	svg := buf.String()
 	if strings.Contains(svg, ">first</text>") || !strings.Contains(svg, ">final</text>") || strings.Contains(svg, "animation:k") {
 		t.Fatalf("zero-duration content output = %q", svg)
+	}
+}
+
+func TestRender_ZeroDurationUsesFinalCursorStateWithoutAnimation(t *testing.T) {
+	rec := createTestRecording()
+	rec.Duration = 0
+	rec.Frames[0].Cursor = ir.Cursor{Col: 1, Row: 1, Visible: true}
+	rec.Frames[1].Cursor = ir.Cursor{Col: 3, Row: 2, Visible: true}
+
+	var buf bytes.Buffer
+	if err := New(renderer.DefaultConfig()).Render(context.Background(), rec, &buf); err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	svg := buf.String()
+	if !strings.Contains(svg, `<g transform="translate(36,50)" visibility="visible"><rect class="cursor"`) {
+		t.Fatal("zero-duration SVG did not render the final cursor state")
+	}
+	for _, forbidden := range []string{"@keyframes cursor", "animation:cursor", "0.000s"} {
+		if strings.Contains(svg, forbidden) {
+			t.Errorf("zero-duration cursor SVG contains %q", forbidden)
+		}
 	}
 }
 
