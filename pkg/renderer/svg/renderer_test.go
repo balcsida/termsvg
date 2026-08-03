@@ -945,6 +945,24 @@ func TestCollectRows_AccountsForR10IDLength(t *testing.T) {
 	}
 }
 
+func TestCollectRows_ResolvesHashCollisionsSemantically(t *testing.T) {
+	rec := createTestRecording()
+	c := &canvas{rec: rec, config: *renderer.DefaultConfig()}
+	states := [][]ir.Row{{
+		{Y: 0, Runs: []ir.TextRun{{Text: strings.Repeat("a", 96)}}},
+		{Y: 1, Runs: []ir.TextRun{{Text: strings.Repeat("b", 96)}}},
+		{Y: 0, Runs: []ir.TextRun{{Text: strings.Repeat("a", 96)}}},
+	}}
+
+	frames, _ := c.collectRowsWithHash(states, func(ir.Row) uint64 { return 0 })
+	if frames[0][0] == frames[0][1] {
+		t.Fatal("unequal rows sharing a hash were interned together")
+	}
+	if frames[0][0] != frames[0][2] {
+		t.Fatal("semantically equal rows were not interned together")
+	}
+}
+
 func TestRender_InlinesUniqueRows(t *testing.T) {
 	rec := createTestRecording()
 	rec.Frames = []ir.Frame{

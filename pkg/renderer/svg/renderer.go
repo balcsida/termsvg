@@ -32,6 +32,7 @@ type canvas struct {
 }
 
 type renderedRow struct {
+	row   ir.Row
 	svg   string
 	count int
 	id    string
@@ -267,19 +268,27 @@ func (c *canvas) contentKeyframes() ([]keyframePoint[int], [][]ir.Row) {
 }
 
 func (c *canvas) collectRows(contentStates [][]ir.Row) ([][]*renderedRow, []*renderedRow) {
-	seen := make(map[string]*renderedRow)
+	return c.collectRowsWithHash(contentStates, semanticRowHash)
+}
+
+func (c *canvas) collectRowsWithHash(contentStates [][]ir.Row, hash func(ir.Row) uint64) ([][]*renderedRow, []*renderedRow) {
+	seen := make(map[uint64][]*renderedRow)
 	frames := make([][]*renderedRow, len(contentStates))
 	ordered := make([]*renderedRow, 0)
 
 	for i, rows := range contentStates {
 		for _, row := range rows {
-			var sb strings.Builder
-			c.writeRow(&sb, row)
-			markup := sb.String()
-			entry := seen[markup]
+			key := hash(row)
+			var entry *renderedRow
+			for _, candidate := range seen[key] {
+				if rowEqual(candidate.row, row) {
+					entry = candidate
+					break
+				}
+			}
 			if entry == nil {
-				entry = &renderedRow{svg: markup}
-				seen[markup] = entry
+				entry = &renderedRow{row: row}
+				seen[key] = append(seen[key], entry)
 				ordered = append(ordered, entry)
 			}
 			entry.count++
@@ -289,6 +298,9 @@ func (c *canvas) collectRows(contentStates [][]ir.Row) ([][]*renderedRow, []*ren
 
 	defs := make([]*renderedRow, 0)
 	for _, entry := range ordered {
+		var sb strings.Builder
+		c.writeRow(&sb, entry.row)
+		entry.svg = sb.String()
 		id := fmt.Sprintf("r%d", len(defs))
 		use := fmt.Sprintf(`<use href="#%s"/>`, id)
 		inlineBytes := entry.count * len(entry.svg)
@@ -300,6 +312,48 @@ func (c *canvas) collectRows(contentStates [][]ir.Row) ([][]*renderedRow, []*ren
 	}
 
 	return frames, defs
+}
+
+func semanticRowHash(row ir.Row) uint64 {
+	const (
+		offset = 14695981039346656037
+		prime  = 1099511628211
+	)
+	h := uint64(offset)
+	addInt := func(value int) {
+		v := uint64(value)
+		for range 8 {
+			h = (h ^ uint64(byte(v))) * prime
+			v >>= 8
+		}
+	}
+	addInt(row.Y)
+	addInt(len(row.Runs))
+	for _, run := range row.Runs {
+		addInt(len(run.Text))
+		for i := range len(run.Text) {
+			h = (h ^ uint64(run.Text[i])) * prime
+		}
+		addInt(run.StartCol)
+		addInt(run.EndCol)
+		addInt(int(run.Attrs.FG))
+		addInt(int(run.Attrs.BG))
+		flags := uint64(0)
+		if run.Attrs.Bold {
+			flags |= 1
+		}
+		if run.Attrs.Italic {
+			flags |= 2
+		}
+		if run.Attrs.Underline {
+			flags |= 4
+		}
+		if run.Attrs.Dim {
+			flags |= 8
+		}
+		h = (h ^ flags) * prime
+	}
+	return h
 }
 
 func (c *canvas) writeRowDefs(defs []*renderedRow) {
