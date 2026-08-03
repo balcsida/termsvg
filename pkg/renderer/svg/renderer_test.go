@@ -502,6 +502,7 @@ func TestRender_HTMLEscaping(t *testing.T) {
 }
 
 func TestRender_HoistsTextWhitespaceAndEscapesTextNodes(t *testing.T) {
+	const inlineText = "  inline middle  "
 	rec := createTestRecording()
 	rec.Width = 80
 	rec.Frames = []ir.Frame{
@@ -514,6 +515,7 @@ func TestRender_HoistsTextWhitespaceAndEscapesTextNodes(t *testing.T) {
 			{Y: 0, Runs: []ir.TextRun{{Text: "  static  ", StartCol: 2, Attrs: ir.CellAttrs{Underline: true}}}},
 			{Y: 1, Runs: []ir.TextRun{{Text: "different", StartCol: 3}}},
 			{Y: 2, Runs: []ir.TextRun{{Text: `<safe>&"'`, StartCol: 5}}},
+			{Y: 3, Runs: []ir.TextRun{{Text: inlineText, StartCol: 4}}},
 		}},
 		{Time: 2 * time.Second, Rows: []ir.Row{
 			{Y: 0, Runs: []ir.TextRun{{Text: "  static  ", StartCol: 2, Attrs: ir.CellAttrs{Underline: true}}}},
@@ -556,10 +558,44 @@ func TestRender_HoistsTextWhitespaceAndEscapesTextNodes(t *testing.T) {
 			if !isMinified && !strings.Contains(svg, `&lt;safe&gt;&amp;"'`) {
 				t.Fatalf("text-node escaping missed a defensive angle escape: %s", svg)
 			}
+			inlineAt := strings.Index(svg, `<text x="48" y="95">`+inlineText+`</text>`)
+			if inlineAt < strings.Index(svg, `</defs>`) {
+				t.Fatalf("whitespace-bearing row was not emitted inline: %s", svg)
+			}
 			if err := xml.Unmarshal([]byte(svg), new(struct{})); err != nil {
 				t.Fatalf("SVG is not valid XML: %v", err)
 			}
+			if got, ok := svgTextAt(svg, "48", "95"); !ok || got != inlineText {
+				t.Fatalf("inline text after XML parse = %q, found=%t; want %q", got, ok, inlineText)
+			}
 		})
+	}
+}
+
+func svgTextAt(svg, x, y string) (string, bool) {
+	decoder := xml.NewDecoder(strings.NewReader(svg))
+	for {
+		token, err := decoder.Token()
+		if err != nil {
+			return "", false
+		}
+		start, ok := token.(xml.StartElement)
+		if !ok || start.Name.Local != "text" {
+			continue
+		}
+		var textX, textY string
+		for _, attr := range start.Attr {
+			if attr.Name.Local == "x" {
+				textX = attr.Value
+			}
+			if attr.Name.Local == "y" {
+				textY = attr.Value
+			}
+		}
+		if textX == x && textY == y {
+			var text string
+			return text, decoder.DecodeElement(&text, &start) == nil
+		}
 	}
 }
 
