@@ -1,9 +1,11 @@
 package export
 
 import (
-	"bytes"
+	"bufio"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -35,6 +37,76 @@ type Cmd struct {
 	Rows     int           `short:"r" default:"0" help:"Override rows (0 = use original)"`
 	Debug    bool          `short:"d" help:"Enable debug logging"`
 	Theme    string        `short:"t" help:"Theme name (built-in) or path to theme JSON file"`
+}
+
+type nbspWriter struct {
+	w       io.Writer
+	pending bool
+}
+
+func newNBSPWriter(w io.Writer) *nbspWriter { return &nbspWriter{w: w} }
+
+func (w *nbspWriter) Write(p []byte) (int, error) {
+	for i, b := range p {
+		if w.pending {
+			if b == 0xa0 {
+				if err := w.writeByte(' '); err != nil {
+					return i, err
+				}
+				w.pending = false
+				continue
+			}
+			if err := w.writeByte(0xc2); err != nil {
+				return i, err
+			}
+			w.pending = false
+		}
+		if b == 0xc2 {
+			w.pending = true
+			continue
+		}
+		if err := w.writeByte(b); err != nil {
+			return i, err
+		}
+	}
+	return len(p), nil
+}
+
+func (w *nbspWriter) writeByte(b byte) error {
+	n, err := w.w.Write([]byte{b})
+	if err == nil && n != 1 {
+		return io.ErrShortWrite
+	}
+	return err
+}
+
+func (w *nbspWriter) Close() error {
+	if !w.pending {
+		return nil
+	}
+	w.pending = false
+	return w.writeByte(0xc2)
+}
+
+func writeOutput(
+	ctx context.Context,
+	rdr renderer.Renderer,
+	rec *ir.Recording,
+	dst io.Writer,
+	minifySVG bool,
+) error {
+	if !minifySVG {
+		return rdr.Render(ctx, rec, dst)
+	}
+
+	buf := bufio.NewWriter(dst)
+	spaces := newNBSPWriter(buf)
+	m := minify.New()
+	m.AddFunc("image/svg+xml", msvg.Minify)
+	minified := m.Writer("image/svg+xml", spaces)
+
+	renderErr := rdr.Render(ctx, rec, minified)
+	return errors.Join(renderErr, minified.Close(), spaces.Close(), buf.Flush())
 }
 
 //nolint:funlen,gocognit // sequential export steps are clearer in one function
@@ -101,6 +173,14 @@ func (cmd *Cmd) Run() error {
 	// Create progress reporter
 	reporter, progressCh := progress.New()
 	reporter.Start()
+	exported := false
+	defer func() {
+		close(progressCh)
+		reporter.Wait()
+		if exported {
+			fmt.Printf("\nExported: %s\n", output)
+		}
+	}()
 
 	// Process through IR
 	procConfig := ir.DefaultProcessorConfig()
@@ -112,8 +192,6 @@ func (cmd *Cmd) Run() error {
 	proc := ir.NewProcessor(procConfig)
 	rec, err := proc.Process(cast)
 	if err != nil {
-		close(progressCh)
-		reporter.Wait()
 		return err
 	}
 
@@ -153,41 +231,10 @@ func (cmd *Cmd) Run() error {
 	}
 	defer outFile.Close()
 
-	// Render (with optional minification for SVG)
-	if cmd.Minify && format == "svg" {
-		var buf bytes.Buffer
-		if err := rdr.Render(context.Background(), rec, &buf); err != nil {
-			close(progressCh)
-			reporter.Wait()
-			return err
-		}
-		m := minify.New()
-		m.AddFunc("image/svg+xml", msvg.Minify)
-		var minified bytes.Buffer
-		if err := m.Minify("image/svg+xml", &minified, &buf); err != nil {
-			close(progressCh)
-			reporter.Wait()
-			return err
-		}
-		// Replace non-breaking spaces back to regular spaces after minification
-		result := strings.ReplaceAll(minified.String(), "\u00A0", " ")
-		if _, err := outFile.WriteString(result); err != nil {
-			close(progressCh)
-			reporter.Wait()
-			return err
-		}
-	} else {
-		if err := rdr.Render(context.Background(), rec, outFile); err != nil {
-			close(progressCh)
-			reporter.Wait()
-			return err
-		}
+	if err := writeOutput(context.Background(), rdr, rec, outFile, cmd.Minify && format == "svg"); err != nil {
+		return err
 	}
 
-	// Close progress channel and wait for reporter to finish
-	close(progressCh)
-	reporter.Wait()
-
-	fmt.Printf("\nExported: %s\n", output)
+	exported = true
 	return nil
 }
