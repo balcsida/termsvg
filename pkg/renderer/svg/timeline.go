@@ -71,7 +71,7 @@ func (t timeline[T]) animated() bool {
 	return t.duration > 0 && len(t.points) > 1
 }
 
-func (t timeline[T]) keyframes() []keyframePoint[T] {
+func (t timeline[T]) keyframes(equal ...func(T, T) bool) []keyframePoint[T] {
 	if !t.animated() {
 		return nil
 	}
@@ -96,6 +96,15 @@ func (t timeline[T]) keyframes() []keyframePoint[T] {
 		} else {
 			out = append(out, frame)
 		}
+	}
+	if len(equal) > 0 {
+		compacted := out[:0]
+		for _, frame := range out {
+			if len(compacted) == 0 || !equal[0](compacted[len(compacted)-1].state, frame.state) {
+				compacted = append(compacted, frame)
+			}
+		}
+		out = compacted
 	}
 	return out
 }
@@ -156,12 +165,16 @@ func (c *canvas) loopCount() string {
 func (c *canvas) generateCursorKeyframes() string {
 	var sb strings.Builder
 	sb.WriteString("@keyframes cursor{")
-	for _, point := range c.plan.cursor.keyframes() {
+	for _, point := range c.cursorKeyframes() {
 		fmt.Fprintf(&sb, "%s{transform:translate(%dpx,%dpx);visibility:%s}", point.selector,
 			point.state.Col*ColWidth, point.state.Row*RowHeight, cursorVisibility(point.state))
 	}
 	sb.WriteString("}")
 	return sb.String()
+}
+
+func (c *canvas) cursorKeyframes() []keyframePoint[ir.Cursor] {
+	return c.plan.cursor.keyframes(func(a, b ir.Cursor) bool { return a == b })
 }
 
 func cursorVisibility(cursor ir.Cursor) string {

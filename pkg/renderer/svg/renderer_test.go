@@ -213,6 +213,28 @@ func TestRender_UsesCompactStepEndTimelines(t *testing.T) {
 	}
 }
 
+func TestRender_CollapsedSelectorsCompactContentAndCursor(t *testing.T) {
+	rec := createTestRecording()
+	rec.Duration = time.Duration(1<<63 - 1)
+	a := []ir.Row{{Y: 0, Runs: []ir.TextRun{{Text: "a"}}}}
+	b := []ir.Row{{Y: 0, Runs: []ir.TextRun{{Text: "b"}}}}
+	rec.Frames = []ir.Frame{
+		{Rows: a, Cursor: ir.Cursor{Visible: true}},
+		{Time: rec.Duration - 2*time.Nanosecond, Rows: b, Cursor: ir.Cursor{Col: 1, Visible: true}},
+		{Time: rec.Duration - time.Nanosecond, Rows: a, Cursor: ir.Cursor{Visible: true}},
+	}
+
+	var buf bytes.Buffer
+	if err := New(renderer.DefaultConfig()).Render(context.Background(), rec, &buf); err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	for _, forbidden := range []string{"@keyframes k", "animation:k", "@keyframes cursor", "animation:cursor"} {
+		if strings.Contains(buf.String(), forbidden) {
+			t.Errorf("collapsed content/cursor timeline emitted %q", forbidden)
+		}
+	}
+}
+
 func TestRender_ColorClasses(t *testing.T) {
 	r := New(renderer.DefaultConfig())
 	rec := createTestRecording()

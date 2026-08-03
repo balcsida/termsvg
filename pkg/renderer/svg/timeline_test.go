@@ -95,9 +95,8 @@ func TestTimelineSelectorsAreUniqueAndDeterministic(t *testing.T) {
 	}}
 	want := []keyframePoint[string]{
 		{selector: "0%", state: "c"},
-		{selector: "100%", state: "c"},
 	}
-	if got := timeline.keyframes(); !reflect.DeepEqual(got, want) {
+	if got := timeline.keyframes(func(a, b string) bool { return a == b }); !reflect.DeepEqual(got, want) {
 		t.Fatalf("keyframes = %#v, want %#v", got, want)
 	}
 }

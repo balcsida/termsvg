@@ -186,10 +186,11 @@ func (c *canvas) writeStyles() {
 	var sb strings.Builder
 	sb.WriteString("<style>")
 
-	if c.plan.content.animated() {
+	contentFrames, _ := c.contentKeyframes()
+	if len(contentFrames) > 1 {
 		sb.WriteString(c.generateKeyframes())
 	}
-	if c.plan.cursor.animated() {
+	if len(c.cursorKeyframes()) > 1 {
 		sb.WriteString(c.generateCursorKeyframes())
 	}
 	if c.plan.cursorEverVisible {
@@ -249,7 +250,7 @@ func (c *canvas) generateKeyframes() string {
 }
 
 func (c *canvas) contentKeyframes() ([]keyframePoint[int], [][]ir.Row) {
-	frames := c.plan.content.keyframes()
+	frames := c.plan.content.keyframes(rowsEqual)
 	states := make([][]ir.Row, 0, len(frames))
 	out := make([]keyframePoint[int], len(frames))
 	for i, frame := range frames {
@@ -307,7 +308,8 @@ func (c *canvas) writeRowDefs(defs []*renderedRow) {
 }
 
 func (c *canvas) writeFrames(frameRows [][]*renderedRow) {
-	animated := c.plan.content.animated()
+	frames, _ := c.contentKeyframes()
+	animated := len(frames) > 1
 	if !animated {
 		c.writeFrameRows(frameRows[len(frameRows)-1])
 		return
@@ -376,8 +378,11 @@ func (c *canvas) writeCursor() {
 	}
 	point := c.plan.cursor.points[len(c.plan.cursor.points)-1]
 	style := ""
-	if c.plan.cursor.animated() {
-		point = c.plan.cursor.points[0]
+	frames := c.cursorKeyframes()
+	if len(frames) > 0 {
+		point.state = frames[0].state
+	}
+	if len(frames) > 1 {
 		style = fmt.Sprintf(` style="animation:cursor %s %s step-end"`, animationDuration(c.plan.duration), c.loopCount())
 	}
 	fmt.Fprintf(c.w, `<g transform="translate(%d,%d)" visibility="%s"%s><rect class="cursor" width="%d" height="%d"/></g>`,
