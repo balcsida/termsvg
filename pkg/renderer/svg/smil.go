@@ -15,10 +15,10 @@ type smilAttribute struct {
 	value string
 }
 
-func (c *canvas) writeSMILTranslate(w io.Writer, frames []keyframePoint[int]) {
+func (c *canvas) writeSMILTranslate(w io.Writer, frames []keyframePoint[int], width int) {
 	values := make([]string, len(frames))
 	for i, frame := range frames {
-		values[i] = strconv.Itoa(-c.contentWidth() * frame.state)
+		values[i] = strconv.Itoa(-width * frame.state)
 	}
 	c.writeSMILAnimation(w, "animateTransform", []smilAttribute{
 		{name: "attributeName", value: "transform"},

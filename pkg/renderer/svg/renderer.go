@@ -211,7 +211,7 @@ func (c *canvas) writeStyles(content *preparedContent) {
 				if band.name == "" || written[band.name] {
 					continue
 				}
-				sb.WriteString(c.generateBandKeyframes(band.name, band.keyframes))
+				sb.WriteString(c.generateBandKeyframes(band.name, band.keyframes, band.width*ColWidth))
 				written[band.name] = true
 			}
 		} else if len(content.frameKeyframes) > 1 {
@@ -476,49 +476,52 @@ func (c *canvas) writeFrames(frameRows [][]*renderedRow, frames []keyframePoint[
 	}
 	if c.options.Animation == AnimationSMIL {
 		fmt.Fprint(c.w, `<g>`)
-		c.writeSMILTranslate(c.w, frames)
+		c.writeSMILTranslate(c.w, frames, c.contentWidth())
 	} else {
 		fmt.Fprintf(c.w, `<g style="animation:k %s %s step-end">`, animationDuration(c.plan.duration), c.loopCount())
 	}
-	c.writeStateStrip(frameRows)
+	c.writeStateStrip(frameRows, c.contentWidth())
 	fmt.Fprint(c.w, "</g>")
 }
 
 func (c *canvas) writeBands(bands []preparedBand) {
 	for _, band := range bands {
-		fmt.Fprintf(c.w, `<g transform="translate(0,%d)">`, band.y*RowHeight)
+		width := band.width * ColWidth
+		height := band.height * RowHeight
+		fmt.Fprintf(c.w, `<svg x="%d" y="%d" width="%d" height="%d" overflow="hidden">`,
+			band.x*ColWidth, band.y*RowHeight, width, height)
 		if len(band.keyframes) <= 1 {
 			if len(band.rows) > 0 {
 				c.writeFrameRows(band.rows[len(band.rows)-1])
 			}
-			fmt.Fprint(c.w, `</g>`)
+			fmt.Fprint(c.w, `</svg>`)
 			continue
 		}
 		if c.options.Animation == AnimationSMIL {
 			fmt.Fprint(c.w, `<g>`)
-			c.writeSMILTranslate(c.w, band.keyframes)
+			c.writeSMILTranslate(c.w, band.keyframes, width)
 		} else {
 			fmt.Fprintf(c.w, `<g style="animation:%s %s %s step-end">`,
 				band.name, animationDuration(c.plan.duration), c.loopCount())
 		}
-		c.writeStateStrip(band.rows)
-		fmt.Fprint(c.w, `</g></g>`)
+		c.writeStateStrip(band.rows, width)
+		fmt.Fprint(c.w, `</g></svg>`)
 	}
 }
 
-func (c *canvas) writeStateStrip(states [][]*renderedRow) {
+func (c *canvas) writeStateStrip(states [][]*renderedRow, width int) {
 	for i, rows := range states {
-		fmt.Fprintf(c.w, `<g transform="translate(%d)">`, c.contentWidth()*i)
+		fmt.Fprintf(c.w, `<g transform="translate(%d)">`, width*i)
 		c.writeFrameRows(rows)
 		fmt.Fprint(c.w, `</g>`)
 	}
 }
 
-func (c *canvas) generateBandKeyframes(name string, frames []keyframePoint[int]) string {
+func (c *canvas) generateBandKeyframes(name string, frames []keyframePoint[int], width int) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "@keyframes %s{", name)
 	for _, frame := range frames {
-		fmt.Fprintf(&sb, "%s{transform:translateX(%dpx)}", frame.selector, -c.contentWidth()*frame.state)
+		fmt.Fprintf(&sb, "%s{transform:translateX(%dpx)}", frame.selector, -width*frame.state)
 	}
 	sb.WriteString("}")
 	return sb.String()

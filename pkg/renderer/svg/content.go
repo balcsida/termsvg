@@ -15,7 +15,10 @@ type preparedContent struct {
 }
 
 type preparedBand struct {
+	x         int
 	y         int
+	width     int
+	height    int
 	name      string
 	keyframes []keyframePoint[int]
 	rows      [][]*renderedRow
@@ -31,7 +34,7 @@ func (c *canvas) prepareContent() preparedContent {
 }
 
 func (c *canvas) prepareBands() preparedContent {
-	bands := buildRowBands(&c.plan, c.rec.Height)
+	bands := buildRowBands(&c.plan, c.rec.Width, c.rec.Height)
 	prepared := preparedContent{bands: make([]preparedBand, len(bands))}
 	allStates := make([][]ir.Row, 0)
 	stateOffsets := make([]int, len(bands)+1)
@@ -39,7 +42,10 @@ func (c *canvas) prepareBands() preparedContent {
 	for i, band := range bands {
 		keyframes, states := contentKeyframesFor(band.content)
 		prepared.bands[i] = preparedBand{
+			x:         band.x,
 			y:         band.y,
+			width:     band.width,
+			height:    band.height,
 			keyframes: keyframes,
 		}
 		stateOffsets[i] = len(allStates)
@@ -58,7 +64,7 @@ func (c *canvas) prepareBands() preparedContent {
 		if len(prepared.bands[i].keyframes) <= 1 {
 			continue
 		}
-		signature := keyframeSignature(prepared.bands[i].keyframes)
+		signature := keyframeSignature(prepared.bands[i].keyframes, prepared.bands[i].width)
 		name, ok := names[signature]
 		if !ok {
 			name = "b" + strconv.Itoa(len(names))
@@ -85,8 +91,10 @@ func contentKeyframesFor(content timeline[[]ir.Row]) ([]keyframePoint[int], [][]
 	return out, states
 }
 
-func keyframeSignature(frames []keyframePoint[int]) string {
+func keyframeSignature(frames []keyframePoint[int], width int) string {
 	var signature strings.Builder
+	signature.WriteString(strconv.Itoa(width))
+	signature.WriteByte('|')
 	for _, frame := range frames {
 		signature.WriteString(frame.selector)
 		signature.WriteByte(':')
