@@ -95,16 +95,53 @@ func (r *Renderer) Render(ctx context.Context, rec *ir.Recording, w io.Writer) e
 	if err := r.options.Validate(); err != nil {
 		return err
 	}
+	if r.options.Layout == LayoutAuto {
+		layout, err := r.selectAutoLayout(ctx, rec)
+		if err != nil {
+			return err
+		}
+		options := r.options
+		options.Layout = layout
+		return r.renderWithOptions(ctx, rec, w, options)
+	}
+	return r.renderWithOptions(ctx, rec, w, r.options)
+}
 
+func (r *Renderer) selectAutoLayout(ctx context.Context, rec *ir.Recording) (LayoutMode, error) {
+	best := LayoutFrames
+	bestBytes := int64(-1)
+	for _, layout := range []LayoutMode{LayoutFrames, LayoutBands} {
+		options := r.options
+		options.Layout = layout
+		counter := &countingWriter{collapseNBSP: r.config.Minify}
+		if err := r.renderWithOptions(ctx, rec, counter, options); err != nil {
+			return "", err
+		}
+		// Frames win deterministic ties because they are the compatibility
+		// layout and are measured first.
+		if bestBytes < 0 || counter.size() < bestBytes {
+			best = layout
+			bestBytes = counter.size()
+		}
+	}
+	return best, nil
+}
+
+func (r *Renderer) renderWithOptions(
+	ctx context.Context,
+	rec *ir.Recording,
+	w io.Writer,
+	options Options,
+) error {
 	buf := bufio.NewWriterSize(w, 64*1024)
-	plan := buildRenderPlanWithOptions(rec, r.config.ShowCursor, r.options)
+	plan := buildRenderPlanWithOptions(rec, r.config.ShowCursor, options)
 	plan.pruneZeroDwellCursorEndpoint(r.config.LoopCount)
 	c := &canvas{
 		w:          buf,
 		rec:        rec,
 		plan:       plan,
 		config:     r.config,
-		options:    r.options,
+		options:    options,
 		classNames: rec.Colors.GenerateClassNames(),
 	}
 
@@ -112,6 +149,43 @@ func (r *Renderer) Render(ctx context.Context, rec *ir.Recording, w io.Writer) e
 		return err
 	}
 	return buf.Flush()
+}
+
+type countingWriter struct {
+	bytes        int64
+	collapseNBSP bool
+	pendingC2    bool
+}
+
+func (w *countingWriter) Write(p []byte) (int, error) {
+	if !w.collapseNBSP {
+		w.bytes += int64(len(p))
+		return len(p), nil
+	}
+	for _, value := range p {
+		if w.pendingC2 {
+			if value == 0xa0 {
+				w.bytes++
+				w.pendingC2 = false
+				continue
+			}
+			w.bytes++
+			w.pendingC2 = false
+		}
+		if value == 0xc2 {
+			w.pendingC2 = true
+		} else {
+			w.bytes++
+		}
+	}
+	return len(p), nil
+}
+
+func (w *countingWriter) size() int64 {
+	if w.pendingC2 {
+		return w.bytes + 1
+	}
+	return w.bytes
 }
 
 func (c *canvas) contentWidth() int {

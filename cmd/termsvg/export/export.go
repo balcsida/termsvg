@@ -37,7 +37,7 @@ type Cmd struct {
 	Rows           int           `short:"r" default:"0" help:"Override rows (0 = use original)"`
 	Debug          bool          `short:"d" help:"Enable debug logging"`
 	Theme          string        `short:"t" help:"Theme name (built-in) or path to theme JSON file"`
-	SVGLayout      string        `default:"frames" enum:"frames,bands" help:"SVG layout: frames or experimental bands"`
+	SVGLayout      string        `default:"frames" enum:"frames,bands,auto" help:"SVG layout: frames, experimental bands, or measured auto selection"`
 	SVGAnimation   string        `default:"css" enum:"css,smil" help:"SVG animation backend (css or experimental smil)"`
 	SVGFrameSwitch string        `default:"translate" enum:"translate,href" help:"SVG state switching: translated strips or experimental animated hrefs"`
 	SVGMaxFPS      int           `default:"0" help:"Maximum SVG timeline FPS; 0 preserves every state"`

@@ -33,6 +33,9 @@ const (
 	// LayoutBands builds independently animated horizontal strips for adjacent
 	// rows that share a change schedule.
 	LayoutBands LayoutMode = "bands"
+	// LayoutAuto measures the concrete frame and band serializations and emits
+	// the smaller one. It is opt-in because it performs an extra render pass.
+	LayoutAuto LayoutMode = "auto"
 
 	// AnimationCSS emits CSS keyframes.
 	AnimationCSS AnimationMode = "css"
@@ -90,7 +93,7 @@ func (o Options) normalized() Options {
 // Validate checks SVG-specific options.
 func (o Options) Validate() error {
 	switch o.Layout {
-	case LayoutFrames, LayoutBands:
+	case LayoutFrames, LayoutBands, LayoutAuto:
 	default:
 		return fmt.Errorf("unsupported SVG layout %q", o.Layout)
 	}
