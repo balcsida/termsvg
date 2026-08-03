@@ -1007,3 +1007,42 @@ func TestRender_OmitsNeverVisibleCursorAndDoesNotAnimateStaticCursor(t *testing.
 		}
 	})
 }
+
+func TestRender_OmitsCursorFromDiscardedVisibleStates(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		duration time.Duration
+		frames   []ir.Frame
+	}{
+		{
+			name:     "same-time visible state is overwritten",
+			duration: time.Second,
+			frames: []ir.Frame{
+				{Cursor: ir.Cursor{Visible: true}},
+				{Cursor: ir.Cursor{}},
+			},
+		},
+		{
+			name: "zero duration uses final hidden state",
+			frames: []ir.Frame{
+				{Cursor: ir.Cursor{Visible: true}},
+				{Time: time.Second, Cursor: ir.Cursor{}},
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := createTestRecording()
+			rec.Duration = tt.duration
+			rec.Frames = tt.frames
+			var buf bytes.Buffer
+			if err := New(renderer.DefaultConfig()).Render(context.Background(), rec, &buf); err != nil {
+				t.Fatalf("Render() error = %v", err)
+			}
+			for _, forbidden := range []string{"@keyframes blink", `.cursor{`, `<rect class="cursor"`} {
+				if strings.Contains(buf.String(), forbidden) {
+					t.Errorf("discarded cursor state emitted %q", forbidden)
+				}
+			}
+		})
+	}
+}

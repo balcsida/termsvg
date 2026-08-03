@@ -30,10 +30,12 @@ func buildRenderPlan(rec *ir.Recording, showCursor bool) renderPlan {
 	if showCursor {
 		cursor := make([]timelinePoint[ir.Cursor], 0, len(rec.Frames))
 		for _, frame := range rec.Frames {
-			plan.cursorEverVisible = plan.cursorEverVisible || frame.Cursor.Visible
 			cursor = append(cursor, timelinePoint[ir.Cursor]{time: frame.Time, state: frame.Cursor})
 		}
 		plan.cursor = normalizeTimeline(rec.Duration, cursor, func(a, b ir.Cursor) bool { return a == b })
+		plan.cursorEverVisible = slices.ContainsFunc(plan.cursor.points, func(point timelinePoint[ir.Cursor]) bool {
+			return point.state.Visible
+		})
 		if !plan.cursorEverVisible {
 			plan.cursor.points = nil
 		}
