@@ -258,19 +258,18 @@ func (p *Processor) preprocessEvents(cast *asciicast.Cast) []asciicast.Event {
 		}
 	}
 
-	// Cap idle time (requires conversion to relative, cap, convert back)
+	// Cap idle time.
 	if p.config.IdleTimeLimit > 0 {
 		limit := p.config.IdleTimeLimit.Seconds()
 		prev := 0.0
+		removed := 0.0
 		for i := range events {
+			events[i].Time -= removed
 			delay := events[i].Time - prev
 			if delay > limit {
-				// Reduce by the excess
 				reduction := delay - limit
-				// Shift this and all subsequent events
-				for j := i; j < len(events); j++ {
-					events[j].Time -= reduction
-				}
+				removed += reduction
+				events[i].Time -= reduction
 			}
 			prev = events[i].Time
 		}

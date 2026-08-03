@@ -156,6 +156,87 @@ func TestProcessor_IdleTimeCap(t *testing.T) {
 	}
 }
 
+func TestProcessor_PreprocessEventsIdleTimeCap(t *testing.T) {
+	tests := []struct {
+		name   string
+		config func(*ProcessorConfig)
+		events []asciicast.Event
+		want   []float64
+	}{
+		{
+			name: "multiple long gaps",
+			config: func(config *ProcessorConfig) {
+				config.IdleTimeLimit = 2 * time.Second
+			},
+			events: []asciicast.Event{
+				{Time: 0}, {Time: 10}, {Time: 20}, {Time: 21},
+			},
+			want: []float64{0, 2, 4, 5},
+		},
+		{
+			name: "gap equal to limit",
+			config: func(config *ProcessorConfig) {
+				config.IdleTimeLimit = 2 * time.Second
+			},
+			events: []asciicast.Event{
+				{Time: 0}, {Time: 2}, {Time: 4},
+			},
+			want: []float64{0, 2, 4},
+		},
+		{
+			name: "speed before capping",
+			config: func(config *ProcessorConfig) {
+				config.Speed = 2
+				config.IdleTimeLimit = 2 * time.Second
+			},
+			events: []asciicast.Event{
+				{Time: 0}, {Time: 10}, {Time: 14},
+			},
+			want: []float64{0, 2, 4},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := DefaultProcessorConfig()
+			config.Compress = false
+			tt.config(config)
+			cast := &asciicast.Cast{Events: tt.events}
+			sourceEvents := append([]asciicast.Event(nil), tt.events...)
+
+			got := NewProcessor(config).preprocessEvents(cast)
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %d events, want %d", len(got), len(tt.want))
+			}
+			for i, want := range tt.want {
+				if got[i].Time != want {
+					t.Errorf("event %d time = %v, want %v", i, got[i].Time, want)
+				}
+				if cast.Events[i] != sourceEvents[i] {
+					t.Errorf("source event %d = %#v, want unchanged %#v", i, cast.Events[i], sourceEvents[i])
+				}
+			}
+		})
+	}
+}
+
+func BenchmarkProcessor_PreprocessEventsIdleTimeCap(b *testing.B) {
+	events := make([]asciicast.Event, 10_000)
+	for i := range events {
+		events[i] = asciicast.Event{Time: float64(i * 10)}
+	}
+	cast := &asciicast.Cast{Events: events}
+	config := DefaultProcessorConfig()
+	config.Compress = false
+	config.IdleTimeLimit = time.Second
+	processor := NewProcessor(config)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = processor.preprocessEvents(cast)
+	}
+}
+
 func TestTextRunGrouping(t *testing.T) {
 	cast := &asciicast.Cast{
 		Header: asciicast.Header{
