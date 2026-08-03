@@ -91,6 +91,19 @@ tasks:
       - ./termsvg export "examples/rgb.cast" -m --svg-animation=smil --svg-max-fps=30 -o "examples/rgb.svg"
       - ./termsvg export "examples/session.cast" -m --svg-layout=bands --svg-animation=smil --svg-max-fps=30 -o "examples/session.svg"
       - ./scripts/update-filesize.sh
+  examples:verify:
+    desc: Regenerate examples and fail if tracked artifacts or size documentation drift
+    cmds:
+      - task: examples
+      - git diff --exit-code -- examples
+
+  svg-layout-matrix:
+    desc: Compare SVG layout and animation representations for a cast
+    deps:
+      - build
+    cmds:
+      - ./scripts/svg-layout-matrix.sh {{.CLI_ARGS}}
+
   goreleaser:
     desc: Run GoReleaser either in snapshot or release mode
     deps:
