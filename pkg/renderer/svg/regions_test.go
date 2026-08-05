@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -85,6 +86,36 @@ func TestOptimizeDynamicRegionsUsesExactBackendProfitability(t *testing.T) {
 		if len(optimized) != 1 || optimized[0].x != 1 || optimized[0].y != 0 ||
 			optimized[0].width != 4 || optimized[0].height != 2 {
 			t.Fatalf("%+v optimized regions = %#v", options, optimized)
+		}
+	}
+}
+
+func TestRegionCostRepresentationExcludesUnrelatedSVG(t *testing.T) {
+	rec := experimentalRecording()
+	config := renderer.DefaultConfig()
+	plan, err := buildSemanticPlan(context.Background(), rec, true, 0, config.LoopCount)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := canvas{rec: rec, plan: plan, config: *config, options: Options{
+		Layout: LayoutRegions, Animation: AnimationCSS, FrameSwitch: FrameSwitchTranslate,
+	}, classNames: rec.Colors.GenerateClassNames(), metrics: &CandidateMetrics{}}
+	content, err := c.prepareLocalViewports(context.Background(), c.regionBands(buildDynamicRegions(&plan, rec.Colors)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := c.renderRegionRepresentation(context.Background(), &out, &content); err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"<defs>", "<svg x=", "@keyframes"} {
+		if !strings.Contains(out.String(), required) {
+			t.Fatalf("region representation missing %q: %s", required, out.String())
+		}
+	}
+	for _, unrelated := range []string{"clipPath", "static", "cursor", "<circle"} {
+		if strings.Contains(out.String(), unrelated) {
+			t.Fatalf("region representation contains unrelated %q: %s", unrelated, out.String())
 		}
 	}
 }
