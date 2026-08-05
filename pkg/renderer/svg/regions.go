@@ -2,11 +2,11 @@ package svg
 
 import (
 	"context"
-	"encoding/binary"
 	"hash/fnv"
 	"reflect"
 	"slices"
 	"sort"
+	"strconv"
 
 	"github.com/mrmarble/termsvg/pkg/color"
 	"github.com/mrmarble/termsvg/pkg/ir"
@@ -21,6 +21,11 @@ type dynamicRegion struct {
 	fallbackRows []ir.Row
 }
 
+type regionMeasurement struct {
+	regions []dynamicRegion
+	bytes   int64
+}
+
 func buildDynamicRegions(plan *renderPlan, colors *color.Catalog) []dynamicRegion {
 	if len(plan.content.points) == 0 {
 		return nil
@@ -29,7 +34,7 @@ func buildDynamicRegions(plan *renderPlan, colors *color.Catalog) []dynamicRegio
 
 	regions := make([]dynamicRegion, 0)
 	for y := range plan.height {
-		regions = append(regions, dynamicRegionsForRow(plan, grids, y, colors)...)
+		regions = append(regions, dynamicRegionsForRow(plan, grids, y)...)
 	}
 	return regions
 }
@@ -46,7 +51,6 @@ func dynamicRegionsForRow(
 	plan *renderPlan,
 	grids []visualGrid,
 	y int,
-	colors *color.Catalog,
 ) []dynamicRegion {
 	for i := range grids {
 		if grids[i].rows[y].supported {
@@ -85,7 +89,7 @@ func dynamicRegionsForRow(
 		for end < len(dynamic) && dynamic[end] {
 			end++
 		}
-		candidate := cropRegion(plan, start, y, end-start, 1, colors)
+		candidate := cropRegionFromGrids(plan, grids, start, y, end-start, 1)
 		if len(candidate.content.points) > 1 {
 			regions = append(regions, candidate)
 		}
@@ -157,22 +161,21 @@ func optimizeRegionMerges(
 	}
 }
 
-type regionMeasurement struct {
-	regions []dynamicRegion
-	bytes   int64
-}
-
 func dynamicRegionSetHash(regions []dynamicRegion) uint64 {
 	h := fnv.New64a()
-	var value [8]byte
+	var value [20]byte
 	addInt := func(n int64) {
-		binary.LittleEndian.PutUint64(value[:], uint64(n))
-		_, _ = h.Write(value[:])
+		_, _ = h.Write(strconv.AppendInt(value[:0], n, 10))
+		_, _ = h.Write([]byte{0})
+	}
+	addUint := func(n uint64) {
+		_, _ = h.Write(strconv.AppendUint(value[:0], n, 10))
+		_, _ = h.Write([]byte{0})
 	}
 	addRows := func(rows []ir.Row) {
 		addInt(int64(len(rows)))
 		for _, row := range rows {
-			addInt(int64(semanticRowHash(row)))
+			addUint(semanticRowHash(row))
 		}
 	}
 	addInt(int64(len(regions)))
@@ -190,19 +193,6 @@ func dynamicRegionSetHash(regions []dynamicRegion) uint64 {
 		addRows(region.fallbackRows)
 	}
 	return h.Sum64()
-}
-
-func mergedRegion(candidate []dynamicRegion, a, b *dynamicRegion) dynamicRegion {
-	x, y := min(a.x, b.x), min(a.y, b.y)
-	width := max(a.x+a.width, b.x+b.width) - x
-	height := max(a.y+a.height, b.y+b.height) - y
-	for i := range candidate {
-		region := candidate[i]
-		if region.x == x && region.y == y && region.width == width && region.height == height {
-			return region
-		}
-	}
-	panic("merged dynamic region missing from candidate")
 }
 
 func mergedRegionIntersectsOther(regions []dynamicRegion, i, j int) bool {
