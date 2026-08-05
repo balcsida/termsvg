@@ -99,6 +99,10 @@ func addStructuralMetrics(metrics *CandidateMetrics, c *canvas, content *prepare
 	if c.plan.cursorEverVisible {
 		addMetric(metrics, false, "g", 1)
 		addMetric(metrics, false, "rect", 1)
+		animations++ // The cursor rect always has the CSS blink animation.
+		if c.options.Animation == AnimationCSS && len(c.cursorKeyframes()) > 1 {
+			animations++
+		}
 		if c.options.Animation == AnimationSMIL && len(c.cursorKeyframes()) > 1 {
 			cursorAnimations := cursorAnimationCount(c.cursorKeyframes())
 			addMetric(metrics, false, "animation", cursorAnimations)
@@ -173,10 +177,9 @@ func addActiveContentMetrics(metrics *CandidateMetrics, c *canvas, content *prep
 		return 1
 	default:
 		addMetric(metrics, false, "g", 1+len(content.frameRows))
-		animations := 0
+		animations := 1
 		if c.options.Animation == AnimationSMIL {
 			addMetric(metrics, false, "animation", 1)
-			animations = 1
 		}
 		addStateRowsMetrics(metrics, c, false, content.frameRows)
 		return animations
@@ -199,9 +202,9 @@ func addLocalViewportMetrics(metrics *CandidateMetrics, c *canvas, content *prep
 			continue
 		}
 		addMetric(metrics, false, "g", 1+len(band.rows))
+		animations++
 		if c.options.Animation == AnimationSMIL {
 			addMetric(metrics, false, "animation", 1)
-			animations++
 		}
 		addStateRowsMetrics(metrics, c, false, band.rows)
 	}

@@ -66,12 +66,13 @@ func (w *candidateWriter) countElements(p []byte) {
 		}
 		nameString := string(name)
 		w.countElement(nameString)
+		if bytes.Contains(token, []byte(`style="animation:`)) ||
+			(nameString == "rect" && bytes.Contains(token, []byte(`class="cursor"`))) {
+			w.markAnimated(w.nextElement + 1)
+		}
 		if nameString == "animate" || nameString == "animateTransform" || nameString == "animateMotion" {
-			if w.animatedAt == nil {
-				w.animatedAt = map[int]bool{}
-			}
 			if len(w.elementStack) > 0 {
-				w.animatedAt[w.elementStack[len(w.elementStack)-1]] = true
+				w.markAnimated(w.elementStack[len(w.elementStack)-1])
 			}
 		}
 		if string(name) == "defs" {
@@ -82,6 +83,13 @@ func (w *candidateWriter) countElements(p []byte) {
 			w.elementStack = append(w.elementStack, w.nextElement)
 		}
 	}
+}
+
+func (w *candidateWriter) markAnimated(element int) {
+	if w.animatedAt == nil {
+		w.animatedAt = map[int]bool{}
+	}
+	w.animatedAt[element] = true
 }
 
 func (w *candidateWriter) countElement(name string) {
@@ -121,6 +129,19 @@ func TestMeasureCandidateReportsSerializedStructure(t *testing.T) {
 	}
 	if metrics.MaxTranslatedWidth <= 0 || metrics.MaxTranslatedArea <= 0 {
 		t.Fatalf("translated surface metrics: %#v", metrics)
+	}
+}
+
+func TestCSSMetricsCountAnimatedContentAndCursorElements(t *testing.T) {
+	metrics, err := New(renderer.DefaultConfig()).MeasureCandidate(context.Background(), experimentalRecording())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metrics.AnimationNodes != 0 {
+		t.Fatalf("CSS animation nodes = %d, want 0", metrics.AnimationNodes)
+	}
+	if metrics.AnimatedElements != 3 {
+		t.Fatalf("CSS animated elements = %d, want content parent, cursor parent, and blinking cursor", metrics.AnimatedElements)
 	}
 }
 
