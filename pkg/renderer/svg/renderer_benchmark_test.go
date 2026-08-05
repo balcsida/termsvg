@@ -6,6 +6,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,6 +25,23 @@ func BenchmarkRender(b *testing.B) {
 	b.Run("repeated_dynamic_rows", func(b *testing.B) { benchmarkRecording(b, repeatedRows(200)) })
 	benchmarkCast(b, "256colors.cast")
 	benchmarkCast(b, "444816.cast")
+}
+
+func BenchmarkCandidateMatrix(b *testing.B) {
+	fixtures := []struct {
+		name       string
+		borderless bool
+	}{
+		{name: "444816.cast"},
+		{name: "444816.cast", borderless: true},
+		{name: "htop.cast"},
+		{name: "session.cast"},
+		{name: "256colors.cast"},
+		{name: "rgb.cast"},
+	}
+	for _, fixture := range fixtures {
+		benchmarkCastMatrix(b, fixture.name, fixture.borderless)
+	}
 }
 
 func benchmarkRecording(b *testing.B, rec *ir.Recording) {
@@ -62,6 +81,57 @@ func benchmarkCast(b *testing.B, name string) {
 		}
 		benchmarkRecording(b, rec)
 	})
+}
+
+func benchmarkCastMatrix(b *testing.B, name string, borderless bool) {
+	b.Helper()
+	path := filepath.Join("..", "..", "..", "examples", name)
+	f, err := os.Open(path) //nolint:gosec // repository benchmark fixture
+	if os.IsNotExist(err) {
+		b.Skipf("optional fixture not found: %s", path)
+	}
+	if err != nil {
+		b.Fatal(err)
+	}
+	cast, err := asciicast.Parse(f)
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		b.Fatal(err)
+	}
+	rec, err := ir.NewProcessor(ir.DefaultProcessorConfig()).Process(cast)
+	if err != nil {
+		b.Fatal(err)
+	}
+	fixture := strings.TrimSuffix(name, filepath.Ext(name))
+	if borderless {
+		fixture += "-borderless"
+	}
+	for _, fps := range []int{0, 30} {
+		for _, variant := range parityOptions {
+			options := append(slices.Clone(variant.options), WithMaxFPS(fps))
+			label := fmt.Sprintf("%s/%dfps/%s", fixture, fps, variant.name)
+			b.Run(label, func(b *testing.B) {
+				config := renderer.DefaultConfig()
+				config.ShowWindow = !borderless
+				benchmarkCandidate(b, rec, config, options...)
+			})
+		}
+	}
+}
+
+func benchmarkCandidate(b *testing.B, rec *ir.Recording, config *renderer.Config, options ...Option) {
+	b.Helper()
+	r := New(config, options...)
+	ctx := context.Background()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		if _, err := r.MeasureCandidate(ctx, rec); err != nil {
+			b.Fatal(err)
+		}
+	}
 }
 
 func staticFrames(count int) *ir.Recording {

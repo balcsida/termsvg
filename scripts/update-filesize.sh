@@ -59,7 +59,7 @@ for filepath in "${SVG_FILES[@]}"; do
     current_formatted=$(format_size "$current")
 
     # Calculate variation percent using bc to suport floating point
-    variation=$(echo "scale=4; (($first-$current)/(($first+$current)/2))*100" | bc)
+    variation=$(echo "scale=4; (($first-$current)/$first)*100" | bc)
 
     # Append row to table
     TABLE+="| $filename | $iterations | $first_formatted | $current_formatted | $variation% |"$'\n'

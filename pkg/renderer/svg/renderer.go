@@ -30,6 +30,7 @@ type canvas struct {
 	config     renderer.Config
 	options    Options
 	classNames map[color.ID]string
+	metrics    *CandidateMetrics
 }
 
 type renderedRow struct {
@@ -45,6 +46,12 @@ type backgroundSpan struct {
 	startCol int
 	endCol   int
 	colorID  color.ID
+}
+
+type countingWriter struct {
+	bytes        int64
+	collapseNBSP bool
+	pendingC2    bool
 }
 
 // Layout constants for SVG rendering
@@ -113,18 +120,38 @@ func (r *Renderer) selectAutoLayout(ctx context.Context, rec *ir.Recording) (Lay
 	for _, layout := range []LayoutMode{LayoutFrames, LayoutBands} {
 		options := r.options
 		options.Layout = layout
-		counter := &countingWriter{collapseNBSP: r.config.Minify}
-		if err := r.renderWithOptions(ctx, rec, counter, options); err != nil {
+		metrics, err := r.renderCandidate(ctx, rec, io.Discard, options)
+		if err != nil {
 			return "", err
 		}
 		// Frames win deterministic ties because they are the compatibility
 		// layout and are measured first.
-		if bestBytes < 0 || counter.size() < bestBytes {
+		if bestBytes < 0 || metrics.FinalBytes < bestBytes {
 			best = layout
-			bestBytes = counter.size()
+			bestBytes = metrics.FinalBytes
 		}
 	}
 	return best, nil
+}
+
+// MeasureCandidate renders the configured candidate to a sink and reports its
+// exact serialized size and structural cost.
+func (r *Renderer) MeasureCandidate(ctx context.Context, rec *ir.Recording) (CandidateMetrics, error) {
+	if len(rec.Frames) == 0 {
+		return CandidateMetrics{}, fmt.Errorf("recording has no frames")
+	}
+	if err := r.options.Validate(); err != nil {
+		return CandidateMetrics{}, err
+	}
+	options := r.options
+	if options.Layout == LayoutAuto {
+		layout, err := r.selectAutoLayout(ctx, rec)
+		if err != nil {
+			return CandidateMetrics{}, err
+		}
+		options.Layout = layout
+	}
+	return r.renderCandidate(ctx, rec, io.Discard, options)
 }
 
 func (r *Renderer) renderWithOptions(
@@ -133,7 +160,19 @@ func (r *Renderer) renderWithOptions(
 	w io.Writer,
 	options Options,
 ) error {
-	buf := bufio.NewWriterSize(w, 64*1024)
+	_, err := r.renderCandidate(ctx, rec, w, options)
+	return err
+}
+
+func (r *Renderer) renderCandidate(
+	ctx context.Context,
+	rec *ir.Recording,
+	w io.Writer,
+	options Options,
+) (CandidateMetrics, error) {
+	metrics := CandidateMetrics{}
+	candidate := &candidateWriter{w: w, metrics: &metrics, collapseNBSP: r.config.Minify}
+	buf := bufio.NewWriterSize(candidate, 64*1024)
 	plan := buildRenderPlanWithOptions(rec, r.config.ShowCursor, options)
 	plan.pruneZeroDwellCursorEndpoint(r.config.LoopCount)
 	c := &canvas{
@@ -143,18 +182,17 @@ func (r *Renderer) renderWithOptions(
 		config:     r.config,
 		options:    options,
 		classNames: rec.Colors.GenerateClassNames(),
+		metrics:    &metrics,
 	}
 
 	if err := c.render(ctx); err != nil {
-		return err
+		return metrics, err
 	}
-	return buf.Flush()
-}
-
-type countingWriter struct {
-	bytes        int64
-	collapseNBSP bool
-	pendingC2    bool
+	if err := buf.Flush(); err != nil {
+		return metrics, err
+	}
+	candidate.finish()
+	return metrics, nil
 }
 
 func (w *countingWriter) Write(p []byte) (int, error) {
@@ -216,6 +254,7 @@ func (c *canvas) render(ctx context.Context) error {
 	}
 
 	content := c.prepareContent()
+	addPreparedMetrics(c.metrics, &content, c.options, c.contentWidth(), c.contentHeight())
 
 	// SVG header
 	width := c.paddedWidth()

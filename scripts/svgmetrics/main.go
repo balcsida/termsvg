@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"regexp"
 	"sort"
 	"strconv"
@@ -21,12 +22,20 @@ import (
 )
 
 type metrics struct {
-	RawBytes, MinifiedBytes, GzipBytes                 int
+	RawBytes, MinifiedBytes, GzipBytes, BrotliBytes    int
 	Elements, FilterRefs, Keyframes, KeyframeSelectors int
 	DuplicateSelectors, AnimatedGroups                 int
+	DefinitionNodes, ActiveNodes                       int
+	TextNodes, RectNodes, GroupNodes, UseNodes         int
+	AnimationNodes, AnimatedElements, StateDefinitions int
+	MaxUseDepth, LocalViewportCount                    int
+	MaxViewportWidth, MaxViewportHeight                int
+	MaxTranslatedWidth, MaxTranslatedArea              int64
 	MaxTranslate                                       float64
 	Tags                                               map[string]int
 }
+
+type viewport struct{ width, height int }
 
 type cssToken struct {
 	typeID css.TokenType
@@ -72,6 +81,7 @@ func measure(raw, minified []byte) (metrics, error) {
 		return result, err
 	}
 	result.GzipBytes = compressed.Len()
+	result.BrotliBytes = brotliSize(minified)
 
 	styles, transforms, groups, err := scanSVG(raw, &result)
 	if err != nil {
@@ -87,12 +97,24 @@ func measure(raw, minified []byte) (metrics, error) {
 		return result, err
 	}
 	result.MaxTranslate = maximum
+	if len(raw) > 0 && result.MaxTranslatedWidth == 0 && maximum > 0 {
+		result.MaxTranslatedWidth = int64(maximum)
+	}
 	return result, nil
 }
 
 //nolint:gocognit,funlen // Stateful XML scan keeps parent, group, style, and transform state synchronized.
 func scanSVG(raw []byte, result *metrics) (styles, transforms []string, groups []groupInfo, err error) {
 	var parents []int
+	var owners []string
+	var viewports []viewport
+	var elementIDs []int
+	nextElementID := 0
+	defsDepth := 0
+	rootSVGSeen := false
+	animatedParents := map[int]bool{}
+	definitionUses := map[string][]string{}
+	var activeUses []string
 	decoder := xml.NewDecoder(bytes.NewReader(raw))
 	for {
 		token, err := decoder.Token()
@@ -104,13 +126,87 @@ func scanSVG(raw []byte, result *metrics) (styles, transforms []string, groups [
 		}
 		switch token := token.(type) {
 		case xml.StartElement:
+			name := token.Name.Local
+			id, href := "", ""
+			currentViewport := viewport{}
+			if len(viewports) > 0 {
+				currentViewport = viewports[len(viewports)-1]
+			}
+			var elementTransforms []string
+			for _, attr := range token.Attr {
+				switch attr.Name.Local {
+				case "id":
+					id = attr.Value
+				case "href":
+					href = strings.TrimPrefix(attr.Value, "#")
+				case "width":
+					currentViewport.width = dimension(attr.Value)
+				case "height":
+					currentViewport.height = dimension(attr.Value)
+				case "transform":
+					elementTransforms = append(elementTransforms, attr.Value)
+				}
+			}
+			if name == "svg" {
+				if rootSVGSeen {
+					result.LocalViewportCount++
+					result.MaxViewportWidth = max(result.MaxViewportWidth, currentViewport.width)
+					result.MaxViewportHeight = max(result.MaxViewportHeight, currentViewport.height)
+				}
+				rootSVGSeen = true
+			}
+			definition := defsDepth > 0 || name == "defs"
 			result.Elements++
-			result.Tags[token.Name.Local]++
+			result.Tags[name]++
+			if definition {
+				result.DefinitionNodes++
+			} else {
+				result.ActiveNodes++
+			}
+			switch name {
+			case "text":
+				result.TextNodes++
+			case "rect":
+				result.RectNodes++
+			case "g":
+				result.GroupNodes++
+			case "use":
+				result.UseNodes++
+			case "animate", "animateTransform", "animateMotion":
+				result.AnimationNodes++
+				if len(elementIDs) > 0 {
+					animatedParents[elementIDs[len(elementIDs)-1]] = true
+				}
+			}
+			owner := ""
+			if len(owners) > 0 {
+				owner = owners[len(owners)-1]
+			}
+			if defsDepth > 0 && id != "" {
+				owner = id
+				if name == "g" && (strings.HasPrefix(id, "_f") || strings.HasPrefix(id, "_b")) {
+					result.StateDefinitions++
+				}
+			}
+			if name == "use" && href != "" {
+				if defsDepth > 0 && owner != "" {
+					definitionUses[owner] = append(definitionUses[owner], href)
+				} else {
+					activeUses = append(activeUses, href)
+				}
+			}
+			owners = append(owners, owner)
+			viewports = append(viewports, currentViewport)
+			nextElementID++
+			elementIDs = append(elementIDs, nextElementID)
+			for _, transform := range elementTransforms {
+				addTranslatedMetrics(result, transform, currentViewport)
+			}
 			parent := -1
 			if len(parents) > 0 {
 				parent = parents[len(parents)-1]
 			}
-			if token.Name.Local == "g" {
+			if name == "g" {
 				parent = len(groups)
 				groups = append(groups, groupInfo{})
 			}
@@ -120,7 +216,7 @@ func scanSVG(raw []byte, result *metrics) (styles, transforms []string, groups [
 				case "filter":
 					result.FilterRefs++
 				case "class":
-					if token.Name.Local == "g" {
+					if name == "g" {
 						groups[parent].classes = strings.Fields(attr.Value)
 					}
 				case "style":
@@ -129,7 +225,7 @@ func scanSVG(raw []byte, result *metrics) (styles, transforms []string, groups [
 						return nil, nil, nil, err
 					}
 					result.FilterRefs += analysis.filters
-					if token.Name.Local == "g" && analysis.animated {
+					if name == "g" && analysis.animated {
 						groups[parent].inlineAnimation = true
 					}
 					transforms = append(transforms, analysis.transforms...)
@@ -137,22 +233,87 @@ func scanSVG(raw []byte, result *metrics) (styles, transforms []string, groups [
 					transforms = append(transforms, attr.Value)
 				}
 			}
-			if parent >= 0 && isSMILAnimation(token.Name.Local) {
+			if parent >= 0 && isSMILAnimation(name) {
 				groups[parent].smilAnimation = true
 			}
-			if token.Name.Local == "style" {
+			if name == "defs" {
+				defsDepth++
+			}
+			if name == "style" {
 				var text string
 				if err := decoder.DecodeElement(&text, &token); err != nil {
 					return nil, nil, nil, err
 				}
 				parents = parents[:len(parents)-1]
+				owners = owners[:len(owners)-1]
+				viewports = viewports[:len(viewports)-1]
+				elementIDs = elementIDs[:len(elementIDs)-1]
 				styles = append(styles, text)
 			}
 		case xml.EndElement:
+			if token.Name.Local == "defs" {
+				defsDepth--
+			}
 			parents = parents[:len(parents)-1]
+			owners = owners[:len(owners)-1]
+			viewports = viewports[:len(viewports)-1]
+			elementIDs = elementIDs[:len(elementIDs)-1]
 		}
 	}
+	result.AnimatedElements = len(animatedParents)
+	result.MaxUseDepth = maxUseDepth(activeUses, definitionUses)
 	return styles, transforms, groups, nil
+}
+
+func dimension(value string) int {
+	number := numberRE.FindString(value)
+	parsed, _ := strconv.ParseFloat(number, 64)
+	return int(parsed)
+}
+
+func addTranslatedMetrics(result *metrics, transform string, viewport viewport) {
+	distance, err := maxTranslate([]string{transform})
+	if err != nil || distance == 0 {
+		return
+	}
+	width := int64(distance) + int64(viewport.width)
+	result.MaxTranslatedWidth = max(result.MaxTranslatedWidth, width)
+	result.MaxTranslatedArea = max(result.MaxTranslatedArea, width*int64(viewport.height))
+}
+
+func maxUseDepth(active []string, definitions map[string][]string) int {
+	var visit func(string, map[string]bool) int
+	visit = func(id string, seen map[string]bool) int {
+		if seen[id] {
+			return 0
+		}
+		seen[id] = true
+		depth := 1
+		for _, child := range definitions[id] {
+			depth = max(depth, 1+visit(child, seen))
+		}
+		delete(seen, id)
+		return depth
+	}
+	depth := 0
+	for _, id := range active {
+		depth = max(depth, visit(id, map[string]bool{}))
+	}
+	return depth
+}
+
+func brotliSize(data []byte) int {
+	path, err := exec.LookPath("brotli")
+	if err != nil {
+		return -1
+	}
+	command := exec.Command(path, "-q", "11", "-c") //nolint:gosec // fixed command, explicit local data
+	command.Stdin = bytes.NewReader(data)
+	output, err := command.Output()
+	if err != nil {
+		return -1
+	}
+	return len(output)
 }
 
 func addStyleMetrics(styles []string, result *metrics, transforms *[]string) ([][]string, error) {
@@ -489,7 +650,7 @@ func run(args []string, stdout io.Writer) error {
 	if set.NArg() == 0 {
 		return fmt.Errorf("usage: svgmetrics -minified raw.svg=minified.svg raw.svg [...]")
 	}
-	records := [][]string{{"file", "minified_file", "raw_bytes", "minified_bytes", "gzip_bytes", "elements", "tags", "filter_references", "keyframes", "keyframe_selectors", "duplicate_selectors", "max_translate", "use", "animated_groups"}}
+	records := [][]string{{"file", "minified_file", "raw_bytes", "minified_bytes", "gzip_bytes", "brotli_bytes", "xml_nodes", "definition_nodes", "active_nodes", "text_nodes", "rect_nodes", "group_nodes", "use_nodes", "animation_nodes", "animated_elements", "state_definitions", "max_use_depth", "max_translated_width", "max_translated_area", "local_viewports", "max_viewport_width", "max_viewport_height", "tags", "filter_references", "keyframes", "keyframe_selectors", "duplicate_selectors", "max_translate", "animated_groups"}}
 	for _, name := range set.Args() {
 		minifiedName, ok := minifiedFiles[name]
 		if !ok {
@@ -518,7 +679,7 @@ func run(args []string, stdout io.Writer) error {
 		for _, tag := range keys {
 			counts = append(counts, fmt.Sprintf("%s=%d", tag, m.Tags[tag]))
 		}
-		records = append(records, []string{name, minifiedName, strconv.Itoa(m.RawBytes), strconv.Itoa(m.MinifiedBytes), strconv.Itoa(m.GzipBytes), strconv.Itoa(m.Elements), strings.Join(counts, ","), strconv.Itoa(m.FilterRefs), strconv.Itoa(m.Keyframes), strconv.Itoa(m.KeyframeSelectors), strconv.Itoa(m.DuplicateSelectors), strconv.FormatFloat(m.MaxTranslate, 'g', -1, 64), strconv.Itoa(m.Tags["use"]), strconv.Itoa(m.AnimatedGroups)})
+		records = append(records, []string{name, minifiedName, strconv.Itoa(m.RawBytes), strconv.Itoa(m.MinifiedBytes), strconv.Itoa(m.GzipBytes), strconv.Itoa(m.BrotliBytes), strconv.Itoa(m.Elements), strconv.Itoa(m.DefinitionNodes), strconv.Itoa(m.ActiveNodes), strconv.Itoa(m.TextNodes), strconv.Itoa(m.RectNodes), strconv.Itoa(m.GroupNodes), strconv.Itoa(m.UseNodes), strconv.Itoa(m.AnimationNodes), strconv.Itoa(m.AnimatedElements), strconv.Itoa(m.StateDefinitions), strconv.Itoa(m.MaxUseDepth), strconv.FormatInt(m.MaxTranslatedWidth, 10), strconv.FormatInt(m.MaxTranslatedArea, 10), strconv.Itoa(m.LocalViewportCount), strconv.Itoa(m.MaxViewportWidth), strconv.Itoa(m.MaxViewportHeight), strings.Join(counts, ","), strconv.Itoa(m.FilterRefs), strconv.Itoa(m.Keyframes), strconv.Itoa(m.KeyframeSelectors), strconv.Itoa(m.DuplicateSelectors), strconv.FormatFloat(m.MaxTranslate, 'g', -1, 64), strconv.Itoa(m.AnimatedGroups)})
 	}
 	var output bytes.Buffer
 	w := csv.NewWriter(&output)

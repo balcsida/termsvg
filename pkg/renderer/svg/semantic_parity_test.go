@@ -1,0 +1,469 @@
+package svg
+
+import (
+	stdcolor "image/color"
+	"math/rand"
+	"reflect"
+	"slices"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+	"unicode"
+
+	termcolor "github.com/mrmarble/termsvg/pkg/color"
+	"github.com/mrmarble/termsvg/pkg/ir"
+	"github.com/mrmarble/termsvg/pkg/renderer"
+)
+
+type semanticCell struct {
+	glyph        string
+	span         int
+	attrs        ir.CellAttrs
+	continuation bool
+	visible      bool
+}
+
+type semanticScreen [][]semanticCell
+
+func TestSemanticScreenPreservesMixedWidthRunAtomically(t *testing.T) {
+	rec := parityRecording(3, 1, [][]ir.Row{{
+		parityRow(0, ir.TextRun{Text: "界A", StartCol: 0, EndCol: 3}),
+	}})
+
+	screen := screenFromRows(rec, rec.Frames[0].Rows, 0, 0)
+	if screen[0][0].glyph != "界A" || screen[0][0].span != 3 ||
+		!screen[0][1].continuation || !screen[0][2].continuation {
+		t.Fatalf("mixed-width cells = %#v", screen[0])
+	}
+}
+
+func TestSemanticScreenPreservesCombiningAndVariationSequences(t *testing.T) {
+	rec := parityRecording(3, 1, [][]ir.Row{{
+		parityRow(0,
+			ir.TextRun{Text: "e\u0301", StartCol: 0, EndCol: 1},
+			ir.TextRun{Text: "✈️", StartCol: 1, EndCol: 3},
+		),
+	}})
+
+	screen := screenFromRows(rec, rec.Frames[0].Rows, 0, 0)
+	if screen[0][0].glyph != "e\u0301" || screen[0][0].span != 1 ||
+		screen[0][1].glyph != "✈️" || screen[0][1].span != 2 || !screen[0][2].continuation {
+		t.Fatalf("combined cells = %#v", screen[0])
+	}
+	ambiguous := semanticRunCells(rec, ir.TextRun{Text: "e\u0301\x00", StartCol: 0, EndCol: 3})
+	if ambiguous[0].glyph != "e\u0301\x00" || ambiguous[0].span != 3 {
+		t.Fatalf("combined run with NUL = %#v", ambiguous)
+	}
+}
+
+func TestSemanticScreenUsesExplicitWideContinuationCells(t *testing.T) {
+	rec := parityRecording(3, 1, [][]ir.Row{{
+		parityRow(0, ir.TextRun{Text: "界\x00A", StartCol: 0, EndCol: 3}),
+	}})
+
+	screen := screenFromRows(rec, rec.Frames[0].Rows, 0, 0)
+	if screen[0][0].glyph != "界" || !screen[0][1].continuation || screen[0][2].glyph != "A" {
+		t.Fatalf("explicit wide cells = %#v", screen[0])
+	}
+}
+
+var parityOptions = []struct {
+	name    string
+	options []Option
+}{
+	{name: "frames-css-translate"},
+	{name: "frames-smil-translate", options: []Option{WithAnimation(AnimationSMIL)}},
+	{name: "frames-smil-href", options: []Option{WithAnimation(AnimationSMIL), WithFrameSwitch(FrameSwitchHref)}},
+	{name: "bands-css-translate", options: []Option{WithLayout(LayoutBands)}},
+	{name: "bands-smil-translate", options: []Option{WithLayout(LayoutBands), WithAnimation(AnimationSMIL)}},
+	{name: "bands-smil-href", options: []Option{
+		WithLayout(LayoutBands), WithAnimation(AnimationSMIL), WithFrameSwitch(FrameSwitchHref),
+	}},
+}
+
+func TestSemanticPlaybackParityTUIFixtures(t *testing.T) {
+	for name, rec := range tuiParityFixtures() {
+		t.Run(name, func(t *testing.T) {
+			for _, variant := range parityOptions {
+				t.Run(variant.name, func(t *testing.T) { assertSemanticParity(t, rec, variant.options...) })
+			}
+		})
+	}
+}
+
+func TestSemanticPlaybackParityDeterministicRandomRecordings(t *testing.T) {
+	rng := rand.New(rand.NewSource(0x5445524d535647)) //nolint:gosec // deterministic test coverage
+	for i := range 64 {
+		rec := randomParityRecording(rng)
+		for _, variant := range parityOptions {
+			t.Run(strconv.Itoa(i)+"/"+variant.name, func(t *testing.T) {
+				assertSemanticParity(t, rec, variant.options...)
+			})
+		}
+	}
+}
+
+func assertSemanticParity(t *testing.T, rec *ir.Recording, opts ...Option) {
+	t.Helper()
+	before := cloneRecording(rec)
+	config := renderer.DefaultConfig()
+	options := DefaultOptions()
+	for _, option := range opts {
+		option(&options)
+	}
+	plan := buildRenderPlanWithOptions(rec, true, options)
+	c := canvas{
+		rec: rec, plan: plan, config: *config, options: options,
+		classNames: rec.Colors.GenerateClassNames(), metrics: &CandidateMetrics{},
+	}
+	prepared := c.prepareContent()
+
+	for _, at := range effectiveTimes(rec) {
+		want := screenFromRows(rec, sourceRowsAt(rec, at), 0, 0)
+		planned := append(slices.Clone(plan.staticRows), timelineStateAt(plan.content, at)...)
+		if got := screenFromRows(rec, planned, 0, 0); !reflect.DeepEqual(got, want) {
+			t.Fatalf("planned screen at %v differs\n got: %#v\nwant: %#v", at, got, want)
+		}
+		if got := preparedScreenAt(rec, &plan, &prepared, options, at); !reflect.DeepEqual(got, want) {
+			t.Fatalf("prepared screen at %v differs\n got: %#v\nwant: %#v", at, got, want)
+		}
+		gotCursor := visibleCursor(timelineStateAt(plan.cursor, at))
+		if expected := visibleCursor(sourceCursorAt(rec, at)); gotCursor != expected {
+			t.Fatalf("cursor at %v = %#v, want %#v", at, gotCursor, expected)
+		}
+	}
+	if !reflect.DeepEqual(rec, before) {
+		t.Fatal("semantic planning mutated source IR")
+	}
+}
+
+func preparedScreenAt(
+	rec *ir.Recording,
+	plan *renderPlan,
+	content *preparedContent,
+	options Options,
+	at time.Duration,
+) semanticScreen {
+	rows := slices.Clone(plan.staticRows)
+	if options.Layout != LayoutBands {
+		_, states := contentKeyframesFor(plan.content)
+		state := rowsStateIndex(states, timelineStateAt(plan.content, at))
+		if state >= 0 && state < len(content.frameRows) {
+			rows = append(rows, renderedRows(content.frameRows[state], 0, 0)...)
+		}
+		return screenFromRows(rec, rows, 0, 0)
+	}
+	bands := buildRowBands(plan, rec.Width, rec.Height)
+	for i, band := range content.bands {
+		_, states := contentKeyframesFor(bands[i].content)
+		state := rowsStateIndex(states, timelineStateAt(bands[i].content, at))
+		if state >= 0 && state < len(band.rows) {
+			rows = append(rows, renderedRows(band.rows[state], band.x, band.y)...)
+		}
+	}
+	return screenFromRows(rec, rows, 0, 0)
+}
+
+func rowsStateIndex(states [][]ir.Row, target []ir.Row) int {
+	for i, state := range states {
+		if rowsEqual(state, target) {
+			return i
+		}
+	}
+	return -1
+}
+
+func renderedRows(rows []*renderedRow, x, y int) []ir.Row {
+	out := make([]ir.Row, len(rows))
+	for i, rendered := range rows {
+		out[i] = rendered.row
+		out[i].Y += y
+		out[i].Runs = slices.Clone(out[i].Runs)
+		for j := range out[i].Runs {
+			out[i].Runs[j].StartCol += x
+			out[i].Runs[j].EndCol += x
+		}
+	}
+	return out
+}
+
+func timelineStateAt[T any](timeline timeline[T], at time.Duration) T {
+	var state T
+	for _, point := range timeline.points {
+		if point.time > at {
+			break
+		}
+		state = point.state
+	}
+	return state
+}
+
+func effectiveTimes(rec *ir.Recording) []time.Duration {
+	times := make([]time.Duration, 0, len(rec.Frames)+1)
+	for _, frame := range rec.Frames {
+		if len(times) == 0 || times[len(times)-1] != frame.Time {
+			times = append(times, frame.Time)
+		}
+	}
+	if len(times) == 0 || times[len(times)-1] != rec.Duration {
+		times = append(times, rec.Duration)
+	}
+	return times
+}
+
+func sourceRowsAt(rec *ir.Recording, at time.Duration) []ir.Row {
+	var rows []ir.Row
+	for _, frame := range rec.Frames {
+		if frame.Time > at {
+			break
+		}
+		rows = frame.Rows
+	}
+	return rows
+}
+
+func sourceCursorAt(rec *ir.Recording, at time.Duration) ir.Cursor {
+	var cursor ir.Cursor
+	for _, frame := range rec.Frames {
+		if frame.Time > at {
+			break
+		}
+		cursor = frame.Cursor
+	}
+	return cursor
+}
+
+func visibleCursor(cursor ir.Cursor) ir.Cursor {
+	if !cursor.Visible {
+		return ir.Cursor{}
+	}
+	return cursor
+}
+
+func screenFromRows(rec *ir.Recording, rows []ir.Row, xOffset, yOffset int) semanticScreen {
+	screen := make(semanticScreen, rec.Height)
+	for y := range screen {
+		screen[y] = make([]semanticCell, rec.Width)
+	}
+	for _, row := range rows {
+		y := row.Y + yOffset
+		if y < 0 || y >= rec.Height {
+			continue
+		}
+		for _, run := range row.Runs {
+			for i, cell := range semanticRunCells(rec, run) {
+				col := run.StartCol + xOffset + i
+				if col < 0 || col >= rec.Width {
+					continue
+				}
+				if cell.visible {
+					screen[y][col] = cell
+				}
+			}
+		}
+	}
+	return screen
+}
+
+func semanticRunCells(rec *ir.Recording, run ir.TextRun) []semanticCell {
+	width := runEndCol(run) - run.StartCol
+	if width <= 0 {
+		return nil
+	}
+	runes := []rune(run.Text)
+	if explicitCellRunes(runes, width) {
+		cells := make([]semanticCell, width)
+		for i, char := range runes {
+			cells[i] = semanticCell{glyph: string(char), span: 1, attrs: run.Attrs}
+			if char == 0 {
+				cells[i].glyph = ""
+				cells[i].continuation = true
+			}
+			cells[i].visible = semanticCellVisible(rec, cells[i])
+		}
+		return cells
+	}
+
+	lead := semanticCell{glyph: run.Text, span: width, attrs: run.Attrs}
+	lead.visible = semanticCellVisible(rec, lead)
+	cells := make([]semanticCell, width)
+	cells[0] = lead
+	for i := 1; i < width; i++ {
+		cells[i] = semanticCell{attrs: run.Attrs, continuation: true, visible: lead.visible}
+	}
+	return cells
+}
+
+func explicitCellRunes(runes []rune, width int) bool {
+	if len(runes) != width {
+		return false
+	}
+	for i, char := range runes {
+		if char <= 0x7f {
+			continue
+		}
+		if unicode.IsMark(char) || i+1 == len(runes) || runes[i+1] != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func semanticCellVisible(rec *ir.Recording, cell semanticCell) bool {
+	return cell.continuation || strings.TrimSpace(cell.glyph) != "" ||
+		cell.attrs.Underline || !rec.Colors.IsDefault(cell.attrs.BG)
+}
+
+func tuiParityFixtures() map[string]*ir.Recording {
+	return map[string]*ir.Recording{
+		"static-dashboard-counter": parityRecording(12, 3, [][]ir.Row{
+			{parityRow(0, parityRun("CPU: 1", 0, ir.CellAttrs{})), parityRow(2, parityRun("ready", 0, ir.CellAttrs{}))},
+			{parityRow(0, parityRun("CPU: 2", 0, ir.CellAttrs{})), parityRow(2, parityRun("ready", 0, ir.CellAttrs{}))},
+		}),
+		"distant-same-row-counters": parityRecording(14, 2, [][]ir.Row{
+			{parityRow(0, parityRun("1", 0, ir.CellAttrs{}), parityRun("9", 12, ir.CellAttrs{}))},
+			{parityRow(0, parityRun("2", 0, ir.CellAttrs{}), parityRun("8", 12, ir.CellAttrs{}))},
+		}),
+		"adjacent-progress-bars": parityRecording(10, 3, [][]ir.Row{
+			{parityRow(0, parityRun("[##  ]", 0, ir.CellAttrs{})), parityRow(1, parityRun("[#   ]", 0, ir.CellAttrs{}))},
+			{parityRow(0, parityRun("[### ]", 0, ir.CellAttrs{})), parityRow(1, parityRun("[##  ]", 0, ir.CellAttrs{}))},
+		}),
+		"scrolling-table": parityRecording(8, 3, [][]ir.Row{
+			{parityRow(0, parityRun("one", 0, ir.CellAttrs{})), parityRow(1, parityRun("two", 0, ir.CellAttrs{}))},
+			{parityRow(0, parityRun("two", 0, ir.CellAttrs{})), parityRow(1, parityRun("three", 0, ir.CellAttrs{}))},
+		}),
+		"full-screen-redraw": parityRecording(6, 2, [][]ir.Row{
+			{parityRow(0, parityRun("aaaa", 0, ir.CellAttrs{})), parityRow(1, parityRun("bbbb", 0, ir.CellAttrs{}))},
+			{
+				parityRow(0, parityRun("xxxx", 0, ir.CellAttrs{Bold: true})),
+				parityRow(1, parityRun("yyyy", 0, ir.CellAttrs{Italic: true})),
+			},
+		}),
+		"help-overlay": parityRecording(10, 3, [][]ir.Row{
+			{parityRow(0, parityRun("main", 0, ir.CellAttrs{}))},
+			{
+				parityRow(0, parityRun("main", 0, ir.CellAttrs{})),
+				parityRow(1, parityRun("? help", 2, ir.CellAttrs{Underline: true})),
+			},
+			{parityRow(0, parityRun("main", 0, ir.CellAttrs{}))},
+		}),
+		"colored-blanks": coloredBlankRecording(),
+		"wide-glyph-fallback": parityRecording(5, 1, [][]ir.Row{
+			{parityRow(0, ir.TextRun{Text: "界A", StartCol: 0, EndCol: 3})},
+			{parityRow(0,
+				ir.TextRun{Text: "e\u0301", StartCol: 0, EndCol: 1},
+				ir.TextRun{Text: "✈️", StartCol: 1, EndCol: 3},
+			)},
+			{parityRow(0, ir.TextRun{Text: "界\x00A", StartCol: 0, EndCol: 3})},
+		}),
+	}
+}
+
+func parityRecording(width, height int, states [][]ir.Row) *ir.Recording {
+	rec := experimentalRecording()
+	rec.Width, rec.Height = width, height
+	rec.Frames = make([]ir.Frame, len(states))
+	for i, rows := range states {
+		rec.Frames[i] = ir.Frame{
+			Time: time.Duration(i) * time.Second, Rows: rows,
+			Cursor: ir.Cursor{Col: i % width, Row: i % height, Visible: i%2 == 0},
+		}
+	}
+	rec.Duration = time.Duration(max(1, len(states))) * time.Second
+	return rec
+}
+
+func coloredBlankRecording() *ir.Recording {
+	rec := parityRecording(5, 1, nil)
+	palette := termcolor.Standard()
+	bg := rec.Colors.Register(termcolor.FromRGB(30, 40, 50), &palette)
+	rec.Frames = []ir.Frame{
+		{Rows: []ir.Row{parityRow(0, parityRun("  ", 1, ir.CellAttrs{BG: bg}))}},
+		{Time: time.Second, Rows: []ir.Row{parityRow(0, parityRun("  ", 2, ir.CellAttrs{BG: bg, Underline: true}))}},
+	}
+	rec.Duration = 2 * time.Second
+	return rec
+}
+
+func parityRow(y int, runs ...ir.TextRun) ir.Row { return ir.Row{Y: y, Runs: runs} }
+
+func parityRun(text string, start int, attrs ir.CellAttrs) ir.TextRun {
+	return ir.TextRun{Text: text, StartCol: start, EndCol: start + len([]rune(text)), Attrs: attrs}
+}
+
+func randomParityRecording(rng *rand.Rand) *ir.Recording {
+	width, height := rng.Intn(8)+1, rng.Intn(5)+1
+	catalog := termcolor.NewCatalog(stdcolor.RGBA{R: 0xee, G: 0xee, B: 0xee, A: 0xff}, stdcolor.RGBA{A: 0xff})
+	palette := termcolor.Standard()
+	fg := catalog.Register(termcolor.FromRGB(200, 100, 50), &palette)
+	bg := catalog.Register(termcolor.FromRGB(20, 60, 100), &palette)
+	frameCount := rng.Intn(7) + 2
+	frames := make([]ir.Frame, frameCount)
+	var previous []ir.Row
+	var at time.Duration
+	for i := range frames {
+		if i > 0 && i%4 != 0 {
+			at += time.Duration(rng.Intn(3)) * 20 * time.Millisecond
+		}
+		rows := randomRows(rng, width, height, fg, bg)
+		if i > 0 && i%5 == 0 {
+			rows = previous
+		}
+		frames[i] = ir.Frame{Time: at, Index: i, Rows: rows, Cursor: ir.Cursor{
+			Col: rng.Intn(width), Row: rng.Intn(height), Visible: rng.Intn(3) != 0,
+		}}
+		previous = rows
+	}
+	return &ir.Recording{Width: width, Height: height, Duration: at + time.Second, Frames: frames, Colors: catalog}
+}
+
+func randomRows(rng *rand.Rand, width, height int, fg, bg termcolor.ID) []ir.Row {
+	rows := make([]ir.Row, 0, height)
+	for y := range height {
+		if rng.Intn(4) == 0 {
+			continue
+		}
+		row := ir.Row{Y: y}
+		for col := 0; col < width; {
+			if rng.Intn(3) == 0 {
+				col++
+				continue
+			}
+			attrs := ir.CellAttrs{
+				Bold: rng.Intn(5) == 0, Italic: rng.Intn(6) == 0,
+				Underline: rng.Intn(5) == 0, Dim: rng.Intn(6) == 0,
+			}
+			if rng.Intn(3) == 0 {
+				attrs.FG = fg
+			}
+			if rng.Intn(4) == 0 {
+				attrs.BG = bg
+			}
+			char := []rune("abcd")[rng.Intn(4)]
+			if rng.Intn(4) == 0 {
+				char = ' '
+			}
+			row.Runs = append(row.Runs, parityRun(string(char), col, attrs))
+			col++
+		}
+		if len(row.Runs) > 0 {
+			rows = append(rows, row)
+		}
+	}
+	return rows
+}
+
+func cloneRecording(rec *ir.Recording) *ir.Recording {
+	clone := *rec
+	clone.Frames = make([]ir.Frame, len(rec.Frames))
+	for i, frame := range rec.Frames {
+		clone.Frames[i] = frame
+		clone.Frames[i].Rows = make([]ir.Row, len(frame.Rows))
+		for j, row := range frame.Rows {
+			clone.Frames[i].Rows[j] = row
+			clone.Frames[i].Rows[j].Runs = slices.Clone(row.Runs)
+		}
+	}
+	return &clone
+}

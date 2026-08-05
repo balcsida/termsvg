@@ -64,6 +64,30 @@ func TestMeasureUsesOnlyTranslateXComponent(t *testing.T) {
 	}
 }
 
+func TestMeasureReportsStructuralCandidateCosts(t *testing.T) {
+	raw := []byte(`<svg width="100" height="50"><defs><g id="_f0"><text>x</text></g></defs>` +
+		`<g><use href="#_f0"><animate attributeName="href"/></use></g>` +
+		`<svg width="20" height="10"><g transform="translate(40)"><rect/></g></svg></svg>`)
+	m, err := measure(raw, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Elements != 10 || m.DefinitionNodes != 3 || m.ActiveNodes != 7 {
+		t.Fatalf("nodes = %d/%d/%d", m.Elements, m.DefinitionNodes, m.ActiveNodes)
+	}
+	if m.TextNodes != 1 || m.RectNodes != 1 || m.GroupNodes != 3 || m.UseNodes != 1 ||
+		m.AnimationNodes != 1 || m.AnimatedElements != 1 || m.StateDefinitions != 1 {
+		t.Fatalf("breakdown = %#v", m)
+	}
+	if m.MaxUseDepth != 1 || m.LocalViewportCount != 1 ||
+		m.MaxViewportWidth != 20 || m.MaxViewportHeight != 10 {
+		t.Fatalf("depth/viewports = %#v", m)
+	}
+	if m.MaxTranslatedWidth != 60 || m.MaxTranslatedArea != 600 {
+		t.Fatalf("translated surface = %d/%d", m.MaxTranslatedWidth, m.MaxTranslatedArea)
+	}
+}
+
 func TestMeasureCountsOnlySoundActiveAnimations(t *testing.T) {
 	raw := []byte(`<svg><style>
 .disabled{animation:none}.named-disabled{animation-name:none}
