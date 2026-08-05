@@ -11,6 +11,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/mrmarble/termsvg/internal/svgoutput"
 	"github.com/mrmarble/termsvg/pkg/color"
 	"github.com/mrmarble/termsvg/pkg/ir"
 	"github.com/mrmarble/termsvg/pkg/renderer"
@@ -224,12 +225,20 @@ func prepareCandidate(
 }
 
 func (r *Renderer) measureCandidate(ctx context.Context, rec *ir.Recording, candidate *preparedCandidate) error {
-	counter := &countingWriter{collapseNBSP: r.config.Minify}
-	if err := r.serializeCandidate(ctx, rec, counter, candidate); err != nil {
+	counter := &countingWriter{}
+	write := func(w io.Writer) error { return r.serializeCandidate(ctx, rec, w, candidate) }
+	if err := writeFinalSVG(counter, r.config.Minify, write); err != nil {
 		return err
 	}
 	candidate.metrics.FinalBytes = counter.size()
 	return nil
+}
+
+func writeFinalSVG(w io.Writer, minify bool, render func(io.Writer) error) error {
+	if minify {
+		return svgoutput.Write(w, render)
+	}
+	return render(w)
 }
 
 func (r *Renderer) serializeCandidate(

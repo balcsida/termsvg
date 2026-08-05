@@ -5,11 +5,17 @@ import (
 	"context"
 	"encoding/xml"
 	"errors"
+	"image/color"
 	"io"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/mrmarble/termsvg/internal/svgoutput"
+	termcolor "github.com/mrmarble/termsvg/pkg/color"
 	"github.com/mrmarble/termsvg/pkg/ir"
+	"github.com/mrmarble/termsvg/pkg/renderer"
+	"github.com/mrmarble/termsvg/pkg/renderer/svg"
 )
 
 type rendererFunc func(io.Writer) error
@@ -65,9 +71,54 @@ func TestWriteOutputMinifiesValidSVGAndRestoresSpaces(t *testing.T) {
 	}
 }
 
+func TestWriteOutputAutoChoosesSmallestMinifiedCandidate(t *testing.T) {
+	rec := &ir.Recording{
+		Width: 20, Height: 3, Duration: 2 * time.Second,
+		Colors: termcolor.NewCatalog(color.RGBA{R: 255, G: 255, B: 255, A: 255}, color.RGBA{A: 255}),
+		Frames: []ir.Frame{
+			{Rows: []ir.Row{
+				{Y: 0, Runs: []ir.TextRun{{Text: "counter  0", EndCol: 10}}},
+				{Y: 2, Runs: []ir.TextRun{{Text: "status  0", StartCol: 10, EndCol: 19}}},
+			}},
+			{Time: time.Second, Rows: []ir.Row{
+				{Y: 0, Runs: []ir.TextRun{{Text: "counter  1", EndCol: 10}}},
+				{Y: 2, Runs: []ir.TextRun{{Text: "status  1", StartCol: 10, EndCol: 19}}},
+			}},
+			{Time: 2 * time.Second, Rows: []ir.Row{
+				{Y: 0, Runs: []ir.TextRun{{Text: "counter  2", EndCol: 10}}},
+				{Y: 2, Runs: []ir.TextRun{{Text: "status  2", StartCol: 10, EndCol: 19}}},
+			}},
+		},
+	}
+	config := renderer.DefaultConfig()
+	config.Minify = true
+	config.ShowCursor = false
+	outputs := make(map[svg.LayoutMode][]byte)
+	for _, layout := range []svg.LayoutMode{svg.LayoutFrames, svg.LayoutBands, svg.LayoutRegions, svg.LayoutAuto} {
+		var out bytes.Buffer
+		rdr := svg.New(config, svg.WithLayout(layout))
+		if err := writeOutput(context.Background(), rdr, rec, &out, true); err != nil {
+			t.Fatalf("%s writeOutput() error = %v", layout, err)
+		}
+		outputs[layout] = out.Bytes()
+		measured, err := rdr.MeasureCandidate(context.Background(), rec)
+		if err != nil {
+			t.Fatalf("%s MeasureCandidate() error = %v", layout, err)
+		}
+		if measured.FinalBytes != int64(out.Len()) {
+			t.Fatalf("%s measured bytes = %d, writeOutput bytes = %d", layout, measured.FinalBytes, out.Len())
+		}
+	}
+	for _, layout := range []svg.LayoutMode{svg.LayoutFrames, svg.LayoutBands, svg.LayoutRegions} {
+		if len(outputs[svg.LayoutAuto]) > len(outputs[layout]) {
+			t.Fatalf("auto bytes = %d, %s bytes = %d", len(outputs[svg.LayoutAuto]), layout, len(outputs[layout]))
+		}
+	}
+}
+
 func TestNBSPWriterHandlesSplitSequence(t *testing.T) {
 	var dst bytes.Buffer
-	w := newNBSPWriter(&dst)
+	w := svgoutput.NewNBSPWriter(&dst)
 
 	for _, chunk := range [][]byte{{'a', 0xc2}, {0xa0, 'b'}, {0xc2}, {'x'}} {
 		if _, err := w.Write(chunk); err != nil {
@@ -148,7 +199,7 @@ func TestWriteOutputStreamsLargeSVG(t *testing.T) {
 
 func TestNBSPWriterPropagatesShortWrite(t *testing.T) {
 	dst := &scriptedWriter{writes: []writeResult{{0, nil}, {1, nil}}}
-	w := newNBSPWriter(dst)
+	w := svgoutput.NewNBSPWriter(dst)
 
 	if n, err := w.Write([]byte("x")); n != 0 || !errors.Is(err, io.ErrShortWrite) {
 		t.Fatalf("Write() = (%d, %v), want (0, %v)", n, err, io.ErrShortWrite)
@@ -164,7 +215,7 @@ func TestNBSPWriterPropagatesShortWrite(t *testing.T) {
 func TestNBSPWriterCountsPartiallyWrittenInput(t *testing.T) {
 	wantErr := errors.New("write failed")
 	dst := &scriptedWriter{writes: []writeResult{{1, wantErr}, {1, nil}}}
-	w := newNBSPWriter(dst)
+	w := svgoutput.NewNBSPWriter(dst)
 
 	if n, err := w.Write([]byte("ab")); n != 1 || !errors.Is(err, wantErr) {
 		t.Fatalf("Write() = (%d, %v), want (1, %v)", n, err, wantErr)
@@ -180,7 +231,7 @@ func TestNBSPWriterCountsPartiallyWrittenInput(t *testing.T) {
 func TestNBSPWriterDoesNotDuplicateCompletedSplitSequence(t *testing.T) {
 	wantErr := errors.New("write failed")
 	dst := &scriptedWriter{writes: []writeResult{{1, wantErr}}}
-	w := newNBSPWriter(dst)
+	w := svgoutput.NewNBSPWriter(dst)
 
 	if n, err := w.Write([]byte{0xc2}); n != 1 || err != nil {
 		t.Fatalf("first Write() = (%d, %v), want (1, nil)", n, err)
@@ -199,7 +250,7 @@ func TestNBSPWriterDoesNotDuplicateCompletedSplitSequence(t *testing.T) {
 func TestNBSPWriterRetriesPendingC2WithoutLosingNextByte(t *testing.T) {
 	wantErr := errors.New("write failed")
 	dst := &scriptedWriter{writes: []writeResult{{1, wantErr}, {1, nil}}}
-	w := newNBSPWriter(dst)
+	w := svgoutput.NewNBSPWriter(dst)
 
 	if n, err := w.Write([]byte{0xc2}); n != 1 || err != nil {
 		t.Fatalf("first Write() = (%d, %v), want (1, nil)", n, err)
@@ -218,7 +269,7 @@ func TestNBSPWriterRetriesPendingC2WithoutLosingNextByte(t *testing.T) {
 func TestNBSPWriterRetriesPendingC2OnClose(t *testing.T) {
 	wantErr := errors.New("write failed")
 	dst := &scriptedWriter{writes: []writeResult{{0, wantErr}, {1, nil}}}
-	w := newNBSPWriter(dst)
+	w := svgoutput.NewNBSPWriter(dst)
 
 	if n, err := w.Write([]byte{0xc2}); n != 1 || err != nil {
 		t.Fatalf("Write() = (%d, %v), want (1, nil)", n, err)
@@ -236,7 +287,7 @@ func TestNBSPWriterRetriesPendingC2OnClose(t *testing.T) {
 
 func TestNBSPWriterPreservesStandaloneA0(t *testing.T) {
 	var dst bytes.Buffer
-	w := newNBSPWriter(&dst)
+	w := svgoutput.NewNBSPWriter(&dst)
 
 	if n, err := w.Write([]byte{0xa0}); n != 1 || err != nil {
 		t.Fatalf("Write() = (%d, %v), want (1, nil)", n, err)
@@ -249,7 +300,7 @@ func TestNBSPWriterPreservesStandaloneA0(t *testing.T) {
 func TestNBSPWriterCountsCompletedPendingByteOnError(t *testing.T) {
 	wantErr := errors.New("write failed")
 	dst := &scriptedWriter{writes: []writeResult{{1, wantErr}}}
-	w := newNBSPWriter(dst)
+	w := svgoutput.NewNBSPWriter(dst)
 
 	if n, err := w.Write([]byte{0xc2, 'x'}); n != 1 || !errors.Is(err, wantErr) {
 		t.Fatalf("Write() = (%d, %v), want (1, %v)", n, err, wantErr)
@@ -278,7 +329,7 @@ func (w *scriptedWriter) Write(p []byte) (int, error) {
 func TestNBSPWriterCloseCountsCompletedByteOnError(t *testing.T) {
 	wantErr := errors.New("write failed")
 	dst := &scriptedWriter{writes: []writeResult{{1, wantErr}}}
-	w := newNBSPWriter(dst)
+	w := svgoutput.NewNBSPWriter(dst)
 
 	_, _ = w.Write([]byte{0xc2})
 	if err := w.Close(); !errors.Is(err, wantErr) {

@@ -7,10 +7,10 @@ import (
 	"io"
 	"reflect"
 	"slices"
-	"strings"
 	"sync/atomic"
 	"testing"
 
+	"github.com/mrmarble/termsvg/internal/svgoutput"
 	"github.com/mrmarble/termsvg/pkg/ir"
 	"github.com/mrmarble/termsvg/pkg/renderer"
 )
@@ -113,13 +113,20 @@ func TestAutoSerializesSmallestPreparedCandidate(t *testing.T) {
 		if err := r.Render(context.Background(), rec, &out); err != nil {
 			t.Fatal(err)
 		}
+		var final bytes.Buffer
+		if err := svgoutput.Write(&final, func(w io.Writer) error {
+			_, err := w.Write(out.Bytes())
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
 		outputs[layout] = out.Bytes()
 		measured, err := r.MeasureCandidate(context.Background(), rec)
 		if err != nil {
 			t.Fatal(err)
 		}
 		metrics[layout] = measured
-		if want := int64(len(strings.ReplaceAll(out.String(), "\u00a0", " "))); measured.FinalBytes != want {
+		if want := int64(final.Len()); measured.FinalBytes != want {
 			t.Fatalf("%s final bytes = %d; want %d", layout, measured.FinalBytes, want)
 		}
 	}
