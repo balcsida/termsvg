@@ -132,6 +132,45 @@ func TestRegionSemanticParityLoopAndContentStateEdges(t *testing.T) {
 	}
 }
 
+func TestRegionSemanticParityWithBoundedAndUnlimitedOptimization(t *testing.T) {
+	rec := tuiParityFixtures()["scrolling-table"]
+	for _, test := range []struct {
+		name   string
+		budget int
+	}{{name: "bounded", budget: regionCandidateEvaluationBudget}, {name: "unlimited", budget: 0}} {
+		t.Run(test.name, func(t *testing.T) {
+			config := renderer.DefaultConfig()
+			options := DefaultOptions()
+			options.Layout = LayoutRegions
+			plan, err := buildSemanticPlan(context.Background(), rec, config.ShowCursor, 0, config.LoopCount)
+			if err != nil {
+				t.Fatal(err)
+			}
+			c := canvas{
+				rec: rec, plan: plan, config: *config, options: options,
+				classNames: rec.Colors.GenerateClassNames(), metrics: &CandidateMetrics{},
+			}
+			regions, err := c.optimizeDynamicRegionsWithBudget(
+				context.Background(), buildDynamicRegions(&plan, rec.Colors), test.budget,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertNoRegionPaintOverlap(t, rec, regions)
+			prepared, err := c.prepareLocalViewports(context.Background(), c.regionBands(regions))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, at := range effectiveTimes(rec) {
+				want := screenFromRows(rec, sourceRowsAt(rec, at), 0, 0)
+				if got := preparedScreenAt(rec, &plan, &prepared, options, at); !reflect.DeepEqual(got, want) {
+					t.Fatalf("prepared screen at %v differs\n got: %#v\nwant: %#v", at, got, want)
+				}
+			}
+		})
+	}
+}
+
 func assertSemanticParity(t *testing.T, rec *ir.Recording, opts ...Option) {
 	t.Helper()
 	assertSemanticParityWithConfig(t, rec, renderer.DefaultConfig(), opts...)

@@ -26,6 +26,13 @@ type regionMeasurement struct {
 	bytes   int64
 }
 
+type regionMergePair struct {
+	i int
+	j int
+}
+
+const regionCandidateEvaluationBudget = 512
+
 func buildDynamicRegions(plan *renderPlan, colors *color.Catalog) []dynamicRegion {
 	if len(plan.content.points) == 0 {
 		return nil
@@ -99,8 +106,16 @@ func dynamicRegionsForRow(
 }
 
 func (c *canvas) optimizeDynamicRegions(ctx context.Context, regions []dynamicRegion) ([]dynamicRegion, error) {
+	return c.optimizeDynamicRegionsWithBudget(ctx, regions, regionCandidateEvaluationBudget)
+}
+
+func (c *canvas) optimizeDynamicRegionsWithBudget(
+	ctx context.Context,
+	regions []dynamicRegion,
+	evaluationBudget int,
+) ([]dynamicRegion, error) {
 	grids := visualGridsForPlan(&c.plan, c.rec.Colors)
-	return optimizeRegionMerges(regions, func(candidate []dynamicRegion) (int64, error) {
+	return optimizeRegionMergesWithBudget(regions, evaluationBudget, func(candidate []dynamicRegion) (int64, error) {
 		return c.serializedRegionBytes(ctx, candidate)
 	}, func(candidate []dynamicRegion, i, j int) []dynamicRegion {
 		return mergeDynamicRegionsFromGrids(&c.plan, grids, candidate, i, j)
@@ -109,6 +124,15 @@ func (c *canvas) optimizeDynamicRegions(ctx context.Context, regions []dynamicRe
 
 func optimizeRegionMerges(
 	regions []dynamicRegion,
+	measure func([]dynamicRegion) (int64, error),
+	merge func([]dynamicRegion, int, int) []dynamicRegion,
+) ([]dynamicRegion, error) {
+	return optimizeRegionMergesWithBudget(regions, 0, measure, merge)
+}
+
+func optimizeRegionMergesWithBudget(
+	regions []dynamicRegion,
+	evaluationBudget int,
 	measure func([]dynamicRegion) (int64, error),
 	merge func([]dynamicRegion, int, int) []dynamicRegion,
 ) ([]dynamicRegion, error) {
@@ -132,25 +156,26 @@ func optimizeRegionMerges(
 	if err != nil {
 		return nil, err
 	}
+	evaluations := 0
 	for {
+		pairs := mergeableRegionPairs(current)
+		if len(pairs) == 0 || evaluationBudget > 0 && evaluations+len(pairs) > evaluationBudget {
+			return current, nil
+		}
+		evaluations += len(pairs)
+
 		bestSavings := int64(0)
 		var best []dynamicRegion
 		bestBytes := int64(0)
-		for i := range current {
-			for j := i + 1; j < len(current); j++ {
-				if !dynamicRegionsMergeable(&current[i], &current[j]) ||
-					mergedRegionIntersectsOther(current, i, j) {
-					continue
-				}
-				candidate := merge(current, i, j)
-				candidateBytes, err := measureCached(candidate)
-				if err != nil {
-					return nil, err
-				}
-				savings := currentBytes - candidateBytes
-				if savings > bestSavings {
-					best, bestBytes, bestSavings = candidate, candidateBytes, savings
-				}
+		for _, pair := range pairs {
+			candidate := merge(current, pair.i, pair.j)
+			candidateBytes, err := measureCached(candidate)
+			if err != nil {
+				return nil, err
+			}
+			savings := currentBytes - candidateBytes
+			if savings > bestSavings {
+				best, bestBytes, bestSavings = candidate, candidateBytes, savings
 			}
 		}
 		if best == nil {
@@ -159,6 +184,19 @@ func optimizeRegionMerges(
 		current = best
 		currentBytes = bestBytes
 	}
+}
+
+func mergeableRegionPairs(regions []dynamicRegion) []regionMergePair {
+	pairs := make([]regionMergePair, 0)
+	for i := range regions {
+		for j := i + 1; j < len(regions); j++ {
+			if dynamicRegionsMergeable(&regions[i], &regions[j]) &&
+				!mergedRegionIntersectsOther(regions, i, j) {
+				pairs = append(pairs, regionMergePair{i: i, j: j})
+			}
+		}
+	}
+	return pairs
 }
 
 func dynamicRegionSetHash(regions []dynamicRegion) uint64 {

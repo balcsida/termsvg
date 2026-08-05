@@ -3,11 +3,16 @@ package svg
 import (
 	"bytes"
 	"context"
+	"io"
+	"os"
+	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/mrmarble/termsvg/pkg/asciicast"
 	"github.com/mrmarble/termsvg/pkg/ir"
 	"github.com/mrmarble/termsvg/pkg/renderer"
 )
@@ -182,6 +187,212 @@ func TestOptimizeRegionMergesMeasuresUnchangedSetOnce(t *testing.T) {
 	if !reflect.DeepEqual(got, regions) {
 		t.Fatalf("tie changed final regions: got %#v, want %#v", got, regions)
 	}
+}
+
+func TestOptimizeRegionMergesDoesNotPartiallyEvaluateOverBudgetRound(t *testing.T) {
+	regions := []dynamicRegion{
+		{x: 1, y: 0, width: 1, height: 1},
+		{x: 1, y: 1, width: 1, height: 1},
+		{x: 1, y: 2, width: 1, height: 1},
+		{x: 1, y: 3, width: 1, height: 1},
+	}
+	measurements := 0
+	merges := 0
+	got, err := optimizeRegionMergesWithBudget(regions, 3, func(candidate []dynamicRegion) (int64, error) {
+		measurements++
+		if len(candidate) == 4 {
+			return 400, nil
+		}
+		if len(candidate) == 3 {
+			for _, region := range candidate {
+				if region.height == 2 {
+					return int64(300 + region.y), nil
+				}
+			}
+		}
+		return 200, nil
+	}, func(candidate []dynamicRegion, i, j int) []dynamicRegion {
+		merges++
+		return mergeRegionBounds(candidate, i, j)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if measurements != 4 {
+		t.Fatalf("measurements = %d, want initial set plus three complete-round candidates", measurements)
+	}
+	if merges != 3 {
+		t.Fatalf("merge evaluations = %d, want only three first-round candidates", merges)
+	}
+	if len(got) != 3 || !slices.ContainsFunc(got, func(region dynamicRegion) bool {
+		return region.y == 0 && region.height == 2
+	}) {
+		t.Fatalf("budgeted regions = %#v, want only the best first-round merge", got)
+	}
+}
+
+func TestBoundedRegionCostsUseExactCompleteRepresentation(t *testing.T) {
+	rec := parityRecording(8, 2, [][]ir.Row{
+		{
+			parityRow(0, parityRun("..", 1, ir.CellAttrs{})),
+			parityRow(1, parityRun("..", 3, ir.CellAttrs{})),
+		},
+		{
+			parityRow(0, parityRun("##", 1, ir.CellAttrs{})),
+			parityRow(1, parityRun("##", 3, ir.CellAttrs{})),
+		},
+	})
+	config := renderer.DefaultConfig()
+	config.ShowCursor = false
+	plan, err := buildSemanticPlan(context.Background(), rec, false, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, minify := range []bool{false, true} {
+		t.Run(map[bool]string{false: "raw", true: "minified"}[minify], func(t *testing.T) {
+			config.Minify = minify
+			c := canvas{
+				rec: rec, plan: plan, config: *config,
+				options:    Options{Layout: LayoutRegions, Animation: AnimationCSS, FrameSwitch: FrameSwitchTranslate},
+				classNames: rec.Colors.GenerateClassNames(), metrics: &CandidateMetrics{},
+			}
+			regions := buildDynamicRegions(&plan, rec.Colors)
+			grids := visualGridsForPlan(&plan, rec.Colors)
+			type measuredSet struct {
+				regions []dynamicRegion
+				bytes   int64
+			}
+			var measured []measuredSet
+			_, err := optimizeRegionMergesWithBudget(regions, 1, func(candidate []dynamicRegion) (int64, error) {
+				cost, err := c.serializedRegionBytes(context.Background(), candidate)
+				if err == nil {
+					measured = append(measured, measuredSet{regions: slices.Clone(candidate), bytes: cost})
+				}
+				return cost, err
+			}, func(candidate []dynamicRegion, i, j int) []dynamicRegion {
+				return mergeDynamicRegionsFromGrids(&plan, grids, candidate, i, j)
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(measured) != 2 {
+				t.Fatalf("measured sets = %d, want current plus one complete candidate", len(measured))
+			}
+			for _, measurement := range measured {
+				assertBoundedRegionCostExact(t, &c, measurement.regions, measurement.bytes, minify)
+			}
+		})
+	}
+}
+
+func assertBoundedRegionCostExact(
+	t *testing.T,
+	c *canvas,
+	regions []dynamicRegion,
+	measuredBytes int64,
+	minify bool,
+) {
+	t.Helper()
+	content, err := c.prepareLocalViewports(context.Background(), c.regionBands(regions))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var direct bytes.Buffer
+	if err := writeFinalSVG(&direct, minify, func(w io.Writer) error {
+		return c.renderRegionRepresentation(context.Background(), w, &content)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if measuredBytes != int64(direct.Len()) {
+		t.Fatalf("bounded cost = %d, direct complete representation = %d", measuredBytes, direct.Len())
+	}
+}
+
+func Test444816BoundedRegionOptimizationMatchesUnlimitedWithinBudget(t *testing.T) {
+	rec := loadRegionCast(t, "444816.cast")
+	config := renderer.DefaultConfig()
+	config.Minify = true
+	options := Options{Layout: LayoutRegions, Animation: AnimationCSS, FrameSwitch: FrameSwitchTranslate}
+	plan, err := buildSemanticPlan(context.Background(), rec, config.ShowCursor, 0, config.LoopCount)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := canvas{
+		rec: rec, plan: plan, config: *config, options: options,
+		classNames: rec.Colors.GenerateClassNames(), metrics: &CandidateMetrics{},
+	}
+	regions := buildDynamicRegions(&plan, rec.Colors)
+	grids := visualGridsForPlan(&plan, rec.Colors)
+	measurements := 0
+	candidateEvaluations := 0
+	bounded, err := optimizeRegionMergesWithBudget(regions, regionCandidateEvaluationBudget,
+		func(candidate []dynamicRegion) (int64, error) {
+			measurements++
+			return c.serializedRegionBytes(context.Background(), candidate)
+		}, func(candidate []dynamicRegion, i, j int) []dynamicRegion {
+			candidateEvaluations++
+			return mergeDynamicRegionsFromGrids(&plan, grids, candidate, i, j)
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if candidateEvaluations != 440 {
+		t.Fatalf("candidate evaluations = %d, want fixture baseline 440", candidateEvaluations)
+	}
+	if candidateEvaluations > regionCandidateEvaluationBudget {
+		t.Fatalf("candidate evaluations = %d, budget = %d", candidateEvaluations, regionCandidateEvaluationBudget)
+	}
+	t.Logf("bounded candidate evaluations = %d; serialized sets = %d", candidateEvaluations, measurements)
+	unlimited, err := c.optimizeDynamicRegionsWithBudget(context.Background(), regions, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(regionBounds(bounded), regionBounds(unlimited)) {
+		t.Fatalf(
+			"bounded bounds differ from unlimited\nbounded: %#v\nunlimited: %#v",
+			regionBounds(bounded), regionBounds(unlimited),
+		)
+	}
+	boundedBytes, err := c.serializedRegionBytes(context.Background(), bounded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlimitedBytes, err := c.serializedRegionBytes(context.Background(), unlimited)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if boundedBytes != unlimitedBytes {
+		t.Fatalf("bounded bytes = %d, unlimited bytes = %d", boundedBytes, unlimitedBytes)
+	}
+	t.Logf("bounded/unlimited regions = %d, bytes = %d", len(bounded), boundedBytes)
+}
+
+func loadRegionCast(t *testing.T, name string) *ir.Recording {
+	t.Helper()
+	path := filepath.Join("..", "..", "..", "examples", name)
+	f, err := os.Open(path) //nolint:gosec // repository test fixture
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	cast, err := asciicast.Parse(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, err := ir.NewProcessor(ir.DefaultProcessorConfig()).Process(cast)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rec
+}
+
+func regionBounds(regions []dynamicRegion) [][4]int {
+	bounds := make([][4]int, len(regions))
+	for i, region := range regions {
+		bounds[i] = [4]int{region.x, region.y, region.width, region.height}
+	}
+	return bounds
 }
 
 func mergeRegionBounds(regions []dynamicRegion, i, j int) []dynamicRegion {
