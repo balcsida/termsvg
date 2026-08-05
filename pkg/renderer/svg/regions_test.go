@@ -3,6 +3,9 @@ package svg
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
 	"io"
 	"os"
 	"path/filepath"
@@ -309,10 +312,9 @@ func assertBoundedRegionCostExact(
 	}
 }
 
-func Test444816BoundedRegionOptimizationMatchesUnlimitedWithinBudget(t *testing.T) {
+func Test444816BoundedRegionOptimizationMatchesExhaustiveBaseline(t *testing.T) {
 	rec := loadRegionCast(t, "444816.cast")
 	config := renderer.DefaultConfig()
-	config.Minify = true
 	options := Options{Layout: LayoutRegions, Animation: AnimationCSS, FrameSwitch: FrameSwitchTranslate}
 	plan, err := buildSemanticPlan(context.Background(), rec, config.ShowCursor, 0, config.LoopCount)
 	if err != nil {
@@ -343,29 +345,22 @@ func Test444816BoundedRegionOptimizationMatchesUnlimitedWithinBudget(t *testing.
 	if candidateEvaluations > regionCandidateEvaluationBudget {
 		t.Fatalf("candidate evaluations = %d, budget = %d", candidateEvaluations, regionCandidateEvaluationBudget)
 	}
+	if measurements != 441 {
+		t.Fatalf("serialized sets = %d, want initial set plus 440 candidates", measurements)
+	}
 	t.Logf("bounded candidate evaluations = %d; serialized sets = %d", candidateEvaluations, measurements)
-	unlimited, err := c.optimizeDynamicRegionsWithBudget(context.Background(), regions, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(regionBounds(bounded), regionBounds(unlimited)) {
-		t.Fatalf(
-			"bounded bounds differ from unlimited\nbounded: %#v\nunlimited: %#v",
-			regionBounds(bounded), regionBounds(unlimited),
-		)
-	}
 	boundedBytes, err := c.serializedRegionBytes(context.Background(), bounded)
 	if err != nil {
 		t.Fatal(err)
 	}
-	unlimitedBytes, err := c.serializedRegionBytes(context.Background(), unlimited)
-	if err != nil {
-		t.Fatal(err)
+	if len(bounded) != 22 || boundedBytes != 1588853 {
+		t.Fatalf("bounded result = %d regions/%d bytes, want exhaustive 22/1588853", len(bounded), boundedBytes)
 	}
-	if boundedBytes != unlimitedBytes {
-		t.Fatalf("bounded bytes = %d, unlimited bytes = %d", boundedBytes, unlimitedBytes)
+	const exhaustiveDigest = "7a39f7de73f8b537af69c6960e61b79c2035adbe2168de5cc3b19e73cf9b4cbd"
+	if digest := regionOptimizationDigest(bounded, boundedBytes); digest != exhaustiveDigest {
+		t.Fatalf("bounded result digest = %s, want exhaustive %s", digest, exhaustiveDigest)
 	}
-	t.Logf("bounded/unlimited regions = %d, bytes = %d", len(bounded), boundedBytes)
+	t.Logf("bounded result = %d regions/%d bytes", len(bounded), boundedBytes)
 }
 
 func loadRegionCast(t *testing.T, name string) *ir.Recording {
@@ -393,6 +388,23 @@ func regionBounds(regions []dynamicRegion) [][4]int {
 		bounds[i] = [4]int{region.x, region.y, region.width, region.height}
 	}
 	return bounds
+}
+
+func regionOptimizationDigest(regions []dynamicRegion, serializedBytes int64) string {
+	h := sha256.New()
+	writeInt := func(value int64) {
+		if err := binary.Write(h, binary.BigEndian, value); err != nil {
+			panic(err)
+		}
+	}
+	writeInt(int64(len(regions)))
+	for _, bounds := range regionBounds(regions) {
+		for _, value := range bounds {
+			writeInt(int64(value))
+		}
+	}
+	writeInt(serializedBytes)
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 func mergeRegionBounds(regions []dynamicRegion, i, j int) []dynamicRegion {
