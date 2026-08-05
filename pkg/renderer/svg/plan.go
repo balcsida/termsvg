@@ -28,7 +28,10 @@ func buildRenderPlan(rec *ir.Recording, showCursor bool) renderPlan {
 }
 
 func buildRenderPlanWithOptions(rec *ir.Recording, showCursor bool, options Options) renderPlan {
-	plan, _ := buildSemanticPlan(context.Background(), rec, showCursor, options.MaxFPS, 1)
+	plan, err := buildSemanticPlan(context.Background(), rec, showCursor, options.MaxFPS, 1)
+	if err != nil {
+		return renderPlan{}
+	}
 	return plan
 }
 

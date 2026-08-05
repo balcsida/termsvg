@@ -83,6 +83,9 @@ for fixture in "${fixtures[@]}"; do
         render_variant "$fixture_name" "$cast" "$borderless" "$fps_name" "$fps" bands-css-translate --svg-layout=bands
         render_variant "$fixture_name" "$cast" "$borderless" "$fps_name" "$fps" bands-smil-translate --svg-layout=bands --svg-animation=smil
         render_variant "$fixture_name" "$cast" "$borderless" "$fps_name" "$fps" bands-smil-href --svg-layout=bands --svg-animation=smil --svg-frame-switch=href
+        render_variant "$fixture_name" "$cast" "$borderless" "$fps_name" "$fps" regions-css-translate --svg-layout=regions
+        render_variant "$fixture_name" "$cast" "$borderless" "$fps_name" "$fps" regions-smil-translate --svg-layout=regions --svg-animation=smil
+        render_variant "$fixture_name" "$cast" "$borderless" "$fps_name" "$fps" regions-smil-href --svg-layout=regions --svg-animation=smil --svg-frame-switch=href
     done
 done
 

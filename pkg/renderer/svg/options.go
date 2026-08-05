@@ -33,6 +33,8 @@ const (
 	// LayoutBands builds independently animated horizontal strips for adjacent
 	// rows that share a change schedule.
 	LayoutBands LayoutMode = "bands"
+	// LayoutRegions builds independently animated two-dimensional viewports.
+	LayoutRegions LayoutMode = "regions"
 	// LayoutAuto measures the concrete frame and band serializations and emits
 	// the smaller one. It is opt-in because it performs an extra render pass.
 	LayoutAuto LayoutMode = "auto"
@@ -47,6 +49,10 @@ const (
 	// FrameSwitchHref animates one use element between state definitions.
 	FrameSwitchHref FrameSwitchMode = "href"
 )
+
+func (o Options) usesLocalViewports() bool {
+	return o.Layout == LayoutBands || o.Layout == LayoutRegions
+}
 
 // DefaultOptions returns the compatibility-preserving SVG defaults.
 func DefaultOptions() Options {
@@ -93,7 +99,7 @@ func (o Options) normalized() Options {
 // Validate checks SVG-specific options.
 func (o Options) Validate() error {
 	switch o.Layout {
-	case LayoutFrames, LayoutBands, LayoutAuto:
+	case LayoutFrames, LayoutBands, LayoutRegions, LayoutAuto:
 	default:
 		return fmt.Errorf("unsupported SVG layout %q", o.Layout)
 	}

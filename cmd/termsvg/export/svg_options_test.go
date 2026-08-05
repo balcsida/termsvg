@@ -16,6 +16,10 @@ func TestNormalizedSVGOptions(t *testing.T) {
 	}{
 		{name: "zero value defaults", cmd: Cmd{}, format: "svg", want: svg.DefaultOptions()},
 		{
+			name: "regions layout", cmd: Cmd{SVGLayout: "REGIONS"}, format: "svg",
+			want: svg.Options{Layout: svg.LayoutRegions, Animation: svg.AnimationCSS, FrameSwitch: svg.FrameSwitchTranslate},
+		},
+		{
 			name:   "experimental options",
 			cmd:    Cmd{SVGLayout: "BANDS", SVGAnimation: "SMIL", SVGMaxFPS: 30},
 			format: "svg",

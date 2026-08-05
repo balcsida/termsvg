@@ -29,7 +29,7 @@ func TestBuildVisualGridRepresentsExactGlyphExtents(t *testing.T) {
 			t.Fatalf("row %d unexpectedly unsupported: %#v", y, row.fallback)
 		}
 	}
-	if got := glyphs(grid.rows[0]); !reflect.DeepEqual(got, []visualGlyph{
+	if got := glyphs(&grid.rows[0]); !reflect.DeepEqual(got, []visualGlyph{
 		{text: "A", startCol: 0, width: 1},
 		{text: "B", startCol: 1, width: 1},
 		{text: "C", startCol: 2, width: 1},
@@ -45,7 +45,7 @@ func TestBuildVisualGridRepresentsExactGlyphExtents(t *testing.T) {
 			t.Fatalf("row %d glyph = %#v, want %#v", y+1, got, want)
 		}
 	}
-	if got := glyphs(grid.rows[4]); !reflect.DeepEqual(got, []visualGlyph{
+	if got := glyphs(&grid.rows[4]); !reflect.DeepEqual(got, []visualGlyph{
 		{text: "界", startCol: 0, width: 2},
 		{text: "A", startCol: 2, width: 1},
 	}) {
@@ -106,15 +106,15 @@ func TestVisualGridBlankVisibilityMatchesStaticCells(t *testing.T) {
 		t.Fatalf("blank visibility = %#v", row.cells)
 	}
 	empty := buildVisualGrid(3, 1, nil, testCatalog()).rows[0]
-	if !visualCellsEqual(row, 0, empty, 0) {
+	if !visualCellsEqual(&row, 0, &empty, 0) {
 		t.Fatal("invisible default-background space did not equal an empty cell")
 	}
-	if visualCellsEqual(row, 1, empty, 1) || visualCellsEqual(row, 2, empty, 2) {
+	if visualCellsEqual(&row, 1, &empty, 1) || visualCellsEqual(&row, 2, &empty, 2) {
 		t.Fatal("visible blank equaled an empty cell")
 	}
 }
 
-func glyphs(row visualRow) []visualGlyph {
+func glyphs(row *visualRow) []visualGlyph {
 	got := append([]visualGlyph(nil), row.glyphs...)
 	for i := range got {
 		got[i].attrs = ir.CellAttrs{}

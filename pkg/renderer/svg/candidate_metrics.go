@@ -32,7 +32,8 @@ func addPreparedMetrics(
 	contentWidth, contentHeight int,
 ) {
 	metrics.StateDefinitions = len(content.frameStateIDs)
-	for _, band := range content.bands {
+	for i := range content.bands {
+		band := &content.bands[i]
 		metrics.StateDefinitions += len(band.stateIDs)
 		metrics.LocalViewportCount++
 		metrics.MaxViewportWidth = max(metrics.MaxViewportWidth, band.width*ColWidth)
@@ -41,7 +42,7 @@ func addPreparedMetrics(
 			addTranslatedSurface(metrics, band.width*ColWidth, band.height*RowHeight, len(band.rows))
 		}
 	}
-	if options.Layout != LayoutBands && options.FrameSwitch == FrameSwitchTranslate && len(content.frameKeyframes) > 1 {
+	if !options.usesLocalViewports() && options.FrameSwitch == FrameSwitchTranslate && len(content.frameKeyframes) > 1 {
 		addTranslatedSurface(metrics, contentWidth, contentHeight, len(content.frameRows))
 	}
 	if len(content.rowDefs) > 0 {
@@ -59,129 +60,152 @@ func addTranslatedSurface(metrics *CandidateMetrics, width, height, states int) 
 }
 
 func addStructuralMetrics(metrics *CandidateMetrics, c *canvas, content *preparedContent) {
-	add := func(definition bool, kind string, count int) {
-		if count == 0 {
-			return
-		}
-		metrics.XMLNodes += count
-		if definition {
-			metrics.DefinitionNodes += count
-		} else {
-			metrics.ActiveNodes += count
-		}
-		switch kind {
-		case "text":
-			metrics.TextNodes += count
-		case "rect":
-			metrics.RectNodes += count
-		case "g":
-			metrics.GroupNodes += count
-		case "use":
-			metrics.UseNodes += count
-		case "animation":
-			metrics.AnimationNodes += count
-		}
-	}
-	add(false, "svg", 1)
-	add(false, "rect", 1)
+	addMetric(metrics, false, "svg", 1)
+	addMetric(metrics, false, "rect", 1)
 	if c.config.ShowWindow {
-		add(false, "circle", len(c.config.Theme.WindowButtons))
+		addMetric(metrics, false, "circle", len(c.config.Theme.WindowButtons))
 	}
-	add(true, "defs", 1)
-	add(true, "clipPath", 1)
-	add(true, "rect", 1)
-	add(false, "g", 1)
-	add(false, "style", 1)
+	addMetric(metrics, true, "defs", 1)
+	addMetric(metrics, true, "clipPath", 1)
+	addMetric(metrics, true, "rect", 1)
+	addMetric(metrics, false, "g", 1)
+	addMetric(metrics, false, "style", 1)
 
-	row := func(definition bool, rendered *renderedRow) {
-		if rendered.id != "" {
-			add(definition, "use", 1)
-			return
-		}
-		add(definition, "rect", len(c.backgroundSpans(rendered.row)))
-		for _, run := range rendered.row.Runs {
-			if shouldRenderText(run) {
-				add(definition, "text", 1)
-			}
-		}
-	}
 	for _, definition := range content.rowDefs {
 		if c.rowElementCount(definition.row) > 1 {
-			add(true, "g", 1)
+			addMetric(metrics, true, "g", 1)
 		}
-		copy := *definition
-		copy.id = ""
-		row(true, &copy)
+		renderedDefinition := *definition
+		renderedDefinition.id = ""
+		addRowMetrics(metrics, c, true, &renderedDefinition)
 	}
 	for _, static := range c.plan.staticRows {
-		row(false, &renderedRow{row: static})
+		addRowMetrics(metrics, c, false, &renderedRow{row: static})
 	}
 
-	stateRows := func(definition bool, states [][]*renderedRow) {
-		for _, rows := range states {
-			for _, rendered := range rows {
-				row(definition, rendered)
-			}
-		}
-	}
 	for i := range content.frameStateIDs {
-		add(true, "g", 1)
-		stateRows(true, content.frameRows[i:i+1])
+		addMetric(metrics, true, "g", 1)
+		addStateRowsMetrics(metrics, c, true, content.frameRows[i:i+1])
 	}
-	for _, band := range content.bands {
+	for bandIndex := range content.bands {
+		band := &content.bands[bandIndex]
 		for i := range band.stateIDs {
-			add(true, "g", 1)
-			stateRows(true, band.rows[i:i+1])
+			addMetric(metrics, true, "g", 1)
+			addStateRowsMetrics(metrics, c, true, band.rows[i:i+1])
 		}
 	}
 
-	animations := 0
-	if c.options.Layout == LayoutBands {
-		for _, band := range content.bands {
-			add(false, "svg", 1)
-			if len(band.keyframes) <= 1 {
-				stateRows(false, band.rows)
-				continue
-			}
-			if c.options.FrameSwitch == FrameSwitchHref {
-				add(false, "use", 1)
-				add(false, "animation", 1)
-				animations++
-				continue
-			}
-			add(false, "g", 1+len(band.rows))
-			if c.options.Animation == AnimationSMIL {
-				add(false, "animation", 1)
-				animations++
-			}
-			stateRows(false, band.rows)
-		}
-	} else if len(content.frameKeyframes) <= 1 {
-		stateRows(false, content.frameRows)
-	} else if c.options.FrameSwitch == FrameSwitchHref {
-		add(false, "use", 1)
-		add(false, "animation", 1)
-		animations++
-	} else {
-		add(false, "g", 1+len(content.frameRows))
-		if c.options.Animation == AnimationSMIL {
-			add(false, "animation", 1)
-			animations++
-		}
-		stateRows(false, content.frameRows)
-	}
+	animations := addActiveContentMetrics(metrics, c, content)
 	if c.plan.cursorEverVisible {
-		add(false, "g", 1)
-		add(false, "rect", 1)
+		addMetric(metrics, false, "g", 1)
+		addMetric(metrics, false, "rect", 1)
 		if c.options.Animation == AnimationSMIL && len(c.cursorKeyframes()) > 1 {
 			cursorAnimations := cursorAnimationCount(c.cursorKeyframes())
-			add(false, "animation", cursorAnimations)
+			addMetric(metrics, false, "animation", cursorAnimations)
 			if cursorAnimations > 0 {
 				animations++
 			}
 		}
 	}
 	metrics.AnimatedElements = animations
+}
+
+func addMetric(metrics *CandidateMetrics, definition bool, kind string, count int) {
+	if count == 0 {
+		return
+	}
+	metrics.XMLNodes += count
+	if definition {
+		metrics.DefinitionNodes += count
+	} else {
+		metrics.ActiveNodes += count
+	}
+	switch kind {
+	case "text":
+		metrics.TextNodes += count
+	case "rect":
+		metrics.RectNodes += count
+	case "g":
+		metrics.GroupNodes += count
+	case "use":
+		metrics.UseNodes += count
+	case "animation":
+		metrics.AnimationNodes += count
+	}
+}
+
+func addRowMetrics(metrics *CandidateMetrics, c *canvas, definition bool, rendered *renderedRow) {
+	if rendered.id != "" {
+		addMetric(metrics, definition, "use", 1)
+		return
+	}
+	addMetric(metrics, definition, "rect", len(c.backgroundSpans(rendered.row)))
+	for _, run := range rendered.row.Runs {
+		if shouldRenderText(run) {
+			addMetric(metrics, definition, "text", 1)
+		}
+	}
+}
+
+func addStateRowsMetrics(
+	metrics *CandidateMetrics,
+	c *canvas,
+	definition bool,
+	states [][]*renderedRow,
+) {
+	for _, rows := range states {
+		for _, rendered := range rows {
+			addRowMetrics(metrics, c, definition, rendered)
+		}
+	}
+}
+
+func addActiveContentMetrics(metrics *CandidateMetrics, c *canvas, content *preparedContent) int {
+	switch {
+	case c.options.usesLocalViewports():
+		return addLocalViewportMetrics(metrics, c, content)
+	case len(content.frameKeyframes) <= 1:
+		addStateRowsMetrics(metrics, c, false, content.frameRows)
+		return 0
+	case c.options.FrameSwitch == FrameSwitchHref:
+		addMetric(metrics, false, "use", 1)
+		addMetric(metrics, false, "animation", 1)
+		return 1
+	default:
+		addMetric(metrics, false, "g", 1+len(content.frameRows))
+		animations := 0
+		if c.options.Animation == AnimationSMIL {
+			addMetric(metrics, false, "animation", 1)
+			animations = 1
+		}
+		addStateRowsMetrics(metrics, c, false, content.frameRows)
+		return animations
+	}
+}
+
+func addLocalViewportMetrics(metrics *CandidateMetrics, c *canvas, content *preparedContent) int {
+	animations := 0
+	for i := range content.bands {
+		band := &content.bands[i]
+		addMetric(metrics, false, "svg", 1)
+		if len(band.keyframes) <= 1 {
+			addStateRowsMetrics(metrics, c, false, band.rows)
+			continue
+		}
+		if c.options.FrameSwitch == FrameSwitchHref {
+			addMetric(metrics, false, "use", 1)
+			addMetric(metrics, false, "animation", 1)
+			animations++
+			continue
+		}
+		addMetric(metrics, false, "g", 1+len(band.rows))
+		if c.options.Animation == AnimationSMIL {
+			addMetric(metrics, false, "animation", 1)
+			animations++
+		}
+		addStateRowsMetrics(metrics, c, false, band.rows)
+	}
+	return animations
 }
 
 func cursorAnimationCount(frames []keyframePoint[ir.Cursor]) int {

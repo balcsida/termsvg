@@ -1,6 +1,7 @@
 package svg
 
 import (
+	"context"
 	stdcolor "image/color"
 	"math/rand"
 	"reflect"
@@ -25,6 +26,25 @@ type semanticCell struct {
 }
 
 type semanticScreen [][]semanticCell
+
+var parityOptions = []struct {
+	name    string
+	options []Option
+}{
+	{name: "frames-css-translate"},
+	{name: "frames-smil-translate", options: []Option{WithAnimation(AnimationSMIL)}},
+	{name: "frames-smil-href", options: []Option{WithAnimation(AnimationSMIL), WithFrameSwitch(FrameSwitchHref)}},
+	{name: "bands-css-translate", options: []Option{WithLayout(LayoutBands)}},
+	{name: "bands-smil-translate", options: []Option{WithLayout(LayoutBands), WithAnimation(AnimationSMIL)}},
+	{name: "bands-smil-href", options: []Option{
+		WithLayout(LayoutBands), WithAnimation(AnimationSMIL), WithFrameSwitch(FrameSwitchHref),
+	}},
+	{name: "regions-css-translate", options: []Option{WithLayout(LayoutRegions)}},
+	{name: "regions-smil-translate", options: []Option{WithLayout(LayoutRegions), WithAnimation(AnimationSMIL)}},
+	{name: "regions-smil-href", options: []Option{
+		WithLayout(LayoutRegions), WithAnimation(AnimationSMIL), WithFrameSwitch(FrameSwitchHref),
+	}},
+}
 
 func TestSemanticScreenPreservesMixedWidthRunAtomically(t *testing.T) {
 	rec := parityRecording(3, 1, [][]ir.Row{{
@@ -68,20 +88,6 @@ func TestSemanticScreenUsesExplicitWideContinuationCells(t *testing.T) {
 	}
 }
 
-var parityOptions = []struct {
-	name    string
-	options []Option
-}{
-	{name: "frames-css-translate"},
-	{name: "frames-smil-translate", options: []Option{WithAnimation(AnimationSMIL)}},
-	{name: "frames-smil-href", options: []Option{WithAnimation(AnimationSMIL), WithFrameSwitch(FrameSwitchHref)}},
-	{name: "bands-css-translate", options: []Option{WithLayout(LayoutBands)}},
-	{name: "bands-smil-translate", options: []Option{WithLayout(LayoutBands), WithAnimation(AnimationSMIL)}},
-	{name: "bands-smil-href", options: []Option{
-		WithLayout(LayoutBands), WithAnimation(AnimationSMIL), WithFrameSwitch(FrameSwitchHref),
-	}},
-}
-
 func TestSemanticPlaybackParityTUIFixtures(t *testing.T) {
 	for name, rec := range tuiParityFixtures() {
 		t.Run(name, func(t *testing.T) {
@@ -117,7 +123,18 @@ func assertSemanticParity(t *testing.T, rec *ir.Recording, opts ...Option) {
 		rec: rec, plan: plan, config: *config, options: options,
 		classNames: rec.Colors.GenerateClassNames(), metrics: &CandidateMetrics{},
 	}
-	prepared := c.prepareContent()
+	if options.Layout == LayoutRegions {
+		regions := buildDynamicRegions(&plan, rec.Colors)
+		optimized, err := c.optimizeDynamicRegions(context.Background(), regions)
+		if err != nil {
+			t.Fatalf("optimize regions: %v", err)
+		}
+		assertNoRegionPaintOverlap(t, rec, optimized)
+	}
+	prepared, err := c.prepareContentContext(context.Background())
+	if err != nil {
+		t.Fatalf("prepare content: %v", err)
+	}
 
 	for _, at := range effectiveTimes(rec) {
 		want := screenFromRows(rec, sourceRowsAt(rec, at), 0, 0)
@@ -146,7 +163,7 @@ func preparedScreenAt(
 	at time.Duration,
 ) semanticScreen {
 	rows := slices.Clone(plan.staticRows)
-	if options.Layout != LayoutBands {
+	if options.Layout != LayoutBands && options.Layout != LayoutRegions {
 		_, states := contentKeyframesFor(plan.content)
 		state := rowsStateIndex(states, timelineStateAt(plan.content, at))
 		if state >= 0 && state < len(content.frameRows) {
@@ -154,15 +171,38 @@ func preparedScreenAt(
 		}
 		return screenFromRows(rec, rows, 0, 0)
 	}
-	bands := buildRowBands(plan, rec.Width, rec.Height)
-	for i, band := range content.bands {
-		_, states := contentKeyframesFor(bands[i].content)
-		state := rowsStateIndex(states, timelineStateAt(bands[i].content, at))
+	for bandIndex := range content.bands {
+		band := &content.bands[bandIndex]
+		_, states := contentKeyframesFor(band.content)
+		state := rowsStateIndex(states, timelineStateAt(band.content, at))
 		if state >= 0 && state < len(band.rows) {
 			rows = append(rows, renderedRows(band.rows[state], band.x, band.y)...)
 		}
 	}
 	return screenFromRows(rec, rows, 0, 0)
+}
+
+func assertNoRegionPaintOverlap(t *testing.T, rec *ir.Recording, regions []dynamicRegion) {
+	t.Helper()
+	for _, at := range effectiveTimes(rec) {
+		painted := make(map[[2]int]int)
+		for index, region := range regions {
+			for _, row := range timelineStateAt(region.content, at) {
+				for _, run := range row.Runs {
+					for offset, cell := range semanticRunCells(rec, run) {
+						if !cell.visible {
+							continue
+						}
+						position := [2]int{region.x + run.StartCol + offset, region.y + row.Y}
+						if owner, ok := painted[position]; ok {
+							t.Fatalf("regions %d and %d both paint cell %v at %v", owner, index, position, at)
+						}
+						painted[position] = index
+					}
+				}
+			}
+		}
+	}
 }
 
 func rowsStateIndex(states [][]ir.Row, target []ir.Row) int {

@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestSVGLayoutMatrixCapturesSixVariantsAtTwoFrameRates(t *testing.T) {
+func TestSVGLayoutMatrixCapturesNineVariantsAtTwoFrameRates(t *testing.T) {
 	dir := t.TempDir()
 	cast := filepath.Join(dir, "fixture.cast")
 	writeTestFile(t, cast, "fixture")
@@ -32,13 +32,13 @@ printf '<svg><g transform="translate(20)"><text>x</text></g></svg>' > "$out"
 		t.Fatalf("matrix: %v\n%s", err, output)
 	}
 	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-	if len(lines) != 14 {
-		t.Fatalf("matrix lines = %d, want comment + header + 12 rows\n%s", len(lines), output)
+	if len(lines) != 20 {
+		t.Fatalf("matrix lines = %d, want comment + header + 18 rows\n%s", len(lines), output)
 	}
 	if strings.Contains(string(output), "auto-") {
 		t.Fatalf("matrix contains unsupported auto candidate:\n%s", output)
 	}
-	for _, want := range []string{"lossless-frames-css-translate", "30fps-bands-smil-href"} {
+	for _, want := range []string{"lossless-frames-css-translate", "30fps-bands-smil-href", "lossless-regions-smil-href"} {
 		if !strings.Contains(string(output), want) {
 			t.Fatalf("matrix missing %s:\n%s", want, output)
 		}

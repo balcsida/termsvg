@@ -18,6 +18,14 @@ func TestDefaultOptionsPreserveCompatibilityPath(t *testing.T) {
 	}
 }
 
+func TestRegionsLayoutValidates(t *testing.T) {
+	options := DefaultOptions()
+	options.Layout = LayoutRegions
+	if err := options.Validate(); err != nil {
+		t.Fatalf("regions layout failed validation: %v", err)
+	}
+}
+
 func TestRendererOptionsValidation(t *testing.T) {
 	tests := []struct {
 		name    string

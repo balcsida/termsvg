@@ -3,6 +3,7 @@ package svg
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"reflect"
 	"slices"
@@ -56,16 +57,16 @@ func TestPreparedCandidatesShareOneImmutableSemanticPlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	before := cloneSemanticPlan(plan)
+	before := cloneSemanticPlan(&plan)
 	config := renderer.DefaultConfig()
 
-	frames, err := prepareCandidate(context.Background(), rec, &plan, *config, DefaultOptions())
+	frames, err := prepareCandidate(context.Background(), rec, &plan, config, DefaultOptions())
 	if err != nil {
 		t.Fatal(err)
 	}
 	bandOptions := DefaultOptions()
 	bandOptions.Layout = LayoutBands
-	bands, err := prepareCandidate(context.Background(), rec, &plan, *config, bandOptions)
+	bands, err := prepareCandidate(context.Background(), rec, &plan, config, bandOptions)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,15 +82,21 @@ func TestPreparedCandidatesShareOneImmutableSemanticPlan(t *testing.T) {
 func TestSelectPreparedCandidateKeepsFramesOnTie(t *testing.T) {
 	frames := preparedCandidate{options: Options{Layout: LayoutFrames}, metrics: CandidateMetrics{FinalBytes: 10}}
 	bands := preparedCandidate{options: Options{Layout: LayoutBands}, metrics: CandidateMetrics{FinalBytes: 10}}
-	if got := selectPreparedCandidate(&frames, &bands); got != &frames {
+	regions := preparedCandidate{options: Options{Layout: LayoutRegions}, metrics: CandidateMetrics{FinalBytes: 10}}
+	if got := selectPreparedCandidate(&frames, &bands, &regions); got != &frames {
 		t.Fatalf("tie selected %q; want frames", got.options.Layout)
+	}
+	bands.metrics.FinalBytes = 9
+	regions.metrics.FinalBytes = 9
+	if got := selectPreparedCandidate(&frames, &bands, &regions); got != &bands {
+		t.Fatalf("band/region tie selected %q; want bands", got.options.Layout)
 	}
 }
 
 func TestSemanticPlanningHonorsCancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := buildSemanticPlan(ctx, experimentalRecording(), true, 0, 0); err != context.Canceled {
+	if _, err := buildSemanticPlan(ctx, experimentalRecording(), true, 0, 0); !errors.Is(err, context.Canceled) {
 		t.Fatalf("buildSemanticPlan() error = %v; want context canceled", err)
 	}
 }
@@ -100,7 +107,7 @@ func TestAutoSerializesSmallestPreparedCandidate(t *testing.T) {
 	config.Minify = true
 	outputs := map[LayoutMode][]byte{}
 	metrics := map[LayoutMode]CandidateMetrics{}
-	for _, layout := range []LayoutMode{LayoutFrames, LayoutBands} {
+	for _, layout := range []LayoutMode{LayoutFrames, LayoutBands, LayoutRegions} {
 		r := New(config, WithLayout(layout))
 		var out bytes.Buffer
 		if err := r.Render(context.Background(), rec, &out); err != nil {
@@ -119,6 +126,9 @@ func TestAutoSerializesSmallestPreparedCandidate(t *testing.T) {
 	want := LayoutFrames
 	if metrics[LayoutBands].FinalBytes < metrics[LayoutFrames].FinalBytes {
 		want = LayoutBands
+	}
+	if metrics[LayoutRegions].FinalBytes < metrics[want].FinalBytes {
+		want = LayoutRegions
 	}
 	var got bytes.Buffer
 	if err := New(config, WithLayout(LayoutAuto)).Render(context.Background(), rec, &got); err != nil {
@@ -142,7 +152,8 @@ func TestAutoRenderBuildsSemanticPlanOnce(t *testing.T) {
 	}
 }
 
-func cloneSemanticPlan(plan semanticPlan) semanticPlan {
+func cloneSemanticPlan(source *semanticPlan) semanticPlan {
+	plan := *source
 	cloneRows := func(rows []ir.Row) []ir.Row {
 		out := slices.Clone(rows)
 		for i := range out {

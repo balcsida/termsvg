@@ -7,13 +7,13 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/mrmarble/termsvg/pkg/ir"
 	"github.com/mrmarble/termsvg/pkg/renderer"
 )
 
 type candidateWriter struct {
 	w            io.Writer
 	metrics      *CandidateMetrics
-	pendingC2    bool
 	inDefs       bool
 	pendingTag   []byte
 	elementStack []int
@@ -124,6 +124,39 @@ func TestMeasureCandidateReportsSerializedStructure(t *testing.T) {
 	}
 }
 
+func TestRegionMetricsUseNarrowLocalViewports(t *testing.T) {
+	rec := parityRecording(120, 40, [][]ir.Row{
+		{{Y: 20, Runs: []ir.TextRun{{Text: "0", StartCol: 60, EndCol: 61}}}},
+		{{Y: 20, Runs: []ir.TextRun{{Text: "1", StartCol: 60, EndCol: 61}}}},
+	})
+	metrics, err := New(renderer.DefaultConfig(), WithLayout(LayoutRegions)).MeasureCandidate(context.Background(), rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metrics.LocalViewportCount != 1 || metrics.MaxViewportWidth >= rec.Width*ColWidth ||
+		metrics.MaxTranslatedArea >= int64(rec.Width*ColWidth*rec.Height*RowHeight) {
+		t.Fatalf("region surface metrics = %#v", metrics)
+	}
+}
+
+func TestSparseRegionsTransformLessAreaThanFramesAndBands(t *testing.T) {
+	rec := regionBenchmarkRecordings()["120x40_four_distant_counters"]
+	metrics := map[LayoutMode]CandidateMetrics{}
+	for _, layout := range []LayoutMode{LayoutFrames, LayoutBands, LayoutRegions} {
+		measured, err := New(renderer.DefaultConfig(), WithLayout(layout)).MeasureCandidate(context.Background(), rec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		metrics[layout] = measured
+	}
+	regions := metrics[LayoutRegions]
+	if regions.MaxViewportWidth >= metrics[LayoutBands].MaxViewportWidth ||
+		regions.MaxTranslatedArea >= metrics[LayoutBands].MaxTranslatedArea ||
+		regions.MaxTranslatedArea >= metrics[LayoutFrames].MaxTranslatedArea {
+		t.Fatalf("regions = %#v, bands = %#v, frames = %#v", regions, metrics[LayoutBands], metrics[LayoutFrames])
+	}
+}
+
 func TestPreparedMetricsMatchSerializedStructure(t *testing.T) {
 	for _, variant := range parityOptions {
 		t.Run(variant.name, func(t *testing.T) {
@@ -137,7 +170,7 @@ func TestPreparedMetricsMatchSerializedStructure(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			candidate, err := prepareCandidate(context.Background(), rec, &plan, *config, options)
+			candidate, err := prepareCandidate(context.Background(), rec, &plan, config, options)
 			if err != nil {
 				t.Fatal(err)
 			}

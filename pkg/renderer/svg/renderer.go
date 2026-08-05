@@ -23,13 +23,6 @@ type Renderer struct {
 	onSemanticPlanBuild func()
 }
 
-func (r *Renderer) buildSemanticPlan(ctx context.Context, rec *ir.Recording) (semanticPlan, error) {
-	if r.onSemanticPlanBuild != nil {
-		r.onSemanticPlanBuild()
-	}
-	return buildSemanticPlan(ctx, rec, r.config.ShowCursor, r.options.MaxFPS, r.config.LoopCount)
-}
-
 // canvas holds rendering state
 type canvas struct {
 	w          io.Writer
@@ -87,6 +80,13 @@ const (
 )
 
 var svgTextEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
+
+func (r *Renderer) buildSemanticPlan(ctx context.Context, rec *ir.Recording) (semanticPlan, error) {
+	if r.onSemanticPlanBuild != nil {
+		r.onSemanticPlanBuild()
+	}
+	return buildSemanticPlan(ctx, rec, r.config.ShowCursor, r.options.MaxFPS, r.config.LoopCount)
+}
 
 // New creates a new SVG renderer with the given configuration.
 func New(config *renderer.Config, opts ...Option) *Renderer {
@@ -159,11 +159,11 @@ func (r *Renderer) prepareSelectedCandidate(
 	plan *semanticPlan,
 ) (*preparedCandidate, error) {
 	if r.options.Layout != LayoutAuto {
-		return prepareCandidate(ctx, rec, plan, r.config, r.options)
+		return prepareCandidate(ctx, rec, plan, &r.config, r.options)
 	}
 	options := r.options
 	options.Layout = LayoutFrames
-	frames, err := prepareCandidate(ctx, rec, plan, r.config, options)
+	frames, err := prepareCandidate(ctx, rec, plan, &r.config, options)
 	if err != nil {
 		return nil, err
 	}
@@ -171,34 +171,45 @@ func (r *Renderer) prepareSelectedCandidate(
 		return nil, err
 	}
 	options.Layout = LayoutBands
-	bands, err := prepareCandidate(ctx, rec, plan, r.config, options)
+	bands, err := prepareCandidate(ctx, rec, plan, &r.config, options)
 	if err != nil {
 		return nil, err
 	}
 	if err := r.measureCandidate(ctx, rec, bands); err != nil {
 		return nil, err
 	}
-	return selectPreparedCandidate(frames, bands), nil
+	options.Layout = LayoutRegions
+	regions, err := prepareCandidate(ctx, rec, plan, &r.config, options)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.measureCandidate(ctx, rec, regions); err != nil {
+		return nil, err
+	}
+	return selectPreparedCandidate(frames, bands, regions), nil
 }
 
-func selectPreparedCandidate(frames, bands *preparedCandidate) *preparedCandidate {
-	if bands.metrics.FinalBytes < frames.metrics.FinalBytes {
-		return bands
+func selectPreparedCandidate(candidates ...*preparedCandidate) *preparedCandidate {
+	selected := candidates[0]
+	for _, candidate := range candidates[1:] {
+		if candidate.metrics.FinalBytes < selected.metrics.FinalBytes {
+			selected = candidate
+		}
 	}
-	return frames
+	return selected
 }
 
 func prepareCandidate(
 	ctx context.Context,
 	rec *ir.Recording,
 	plan *semanticPlan,
-	config renderer.Config,
+	config *renderer.Config,
 	options Options,
 ) (*preparedCandidate, error) {
 	c := &canvas{
 		rec:        rec,
 		plan:       *plan,
-		config:     config,
+		config:     *config,
 		options:    options,
 		classNames: rec.Colors.GenerateClassNames(),
 	}
@@ -365,9 +376,10 @@ func (c *canvas) writeStyles(content *preparedContent) {
 	sb.WriteString("<style>")
 
 	if c.options.Animation == AnimationCSS {
-		if c.options.Layout == LayoutBands {
+		if c.options.usesLocalViewports() {
 			written := make(map[string]bool)
-			for _, band := range content.bands {
+			for i := range content.bands {
+				band := &content.bands[i]
 				if band.name == "" || written[band.name] {
 					continue
 				}
@@ -628,7 +640,8 @@ func (c *canvas) writeStateDefs(content *preparedContent) {
 		c.writeFrameRows(content.frameRows[i])
 		fmt.Fprint(c.w, `</g>`)
 	}
-	for _, band := range content.bands {
+	for bandIndex := range content.bands {
+		band := &content.bands[bandIndex]
 		for i, id := range band.stateIDs {
 			fmt.Fprintf(c.w, `<g id="%s">`, id)
 			c.writeFrameRows(band.rows[i])
@@ -638,7 +651,7 @@ func (c *canvas) writeStateDefs(content *preparedContent) {
 }
 
 func (c *canvas) writeContent(content *preparedContent) {
-	if c.options.Layout == LayoutBands {
+	if c.options.usesLocalViewports() {
 		c.writeBands(content.bands)
 		return
 	}
@@ -671,7 +684,8 @@ func (c *canvas) writeFrames(
 }
 
 func (c *canvas) writeBands(bands []preparedBand) {
-	for _, band := range bands {
+	for bandIndex := range bands {
+		band := &bands[bandIndex]
 		width := band.width * ColWidth
 		height := band.height * RowHeight
 		fmt.Fprintf(c.w, `<svg x="%d" y="%d" width="%d" height="%d" overflow="hidden">`,

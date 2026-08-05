@@ -62,6 +62,18 @@ func BenchmarkBandPreparation(b *testing.B) {
 	benchmarkPreparation(b, LayoutBands)
 }
 
+func BenchmarkRegionPreparation(b *testing.B) {
+	benchmarkPreparation(b, LayoutRegions)
+}
+
+func BenchmarkRegionWorkloads(b *testing.B) {
+	for name, rec := range regionBenchmarkRecordings() {
+		b.Run(name, func(b *testing.B) {
+			benchmarkCandidate(b, rec, renderer.DefaultConfig(), WithLayout(LayoutRegions))
+		})
+	}
+}
+
 func BenchmarkAutoSelection(b *testing.B) {
 	rec := staticFrames(200)
 	config := renderer.DefaultConfig()
@@ -108,7 +120,7 @@ func benchmarkPreparation(b *testing.B, layout LayoutMode) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for range b.N {
-		if _, err := prepareCandidate(context.Background(), rec, &plan, *config, options); err != nil {
+		if _, err := prepareCandidate(context.Background(), rec, &plan, config, options); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -252,4 +264,27 @@ func repeatedRows(count int) *ir.Recording {
 	}
 	rec.Duration = time.Duration(count) * time.Millisecond
 	return rec
+}
+
+func regionBenchmarkRecordings() map[string]*ir.Recording {
+	fixtures := tuiParityFixtures()
+	return map[string]*ir.Recording{
+		"120x40_one_counter": parityRecording(120, 40, [][]ir.Row{
+			{parityRow(20, parityRun("0", 60, ir.CellAttrs{}))},
+			{parityRow(20, parityRun("1", 60, ir.CellAttrs{}))},
+		}),
+		"120x40_four_distant_counters": parityRecording(120, 40, [][]ir.Row{
+			{
+				parityRow(5, parityRun("0", 5, ir.CellAttrs{}), parityRun("0", 110, ir.CellAttrs{})),
+				parityRow(35, parityRun("0", 5, ir.CellAttrs{}), parityRun("0", 110, ir.CellAttrs{})),
+			},
+			{
+				parityRow(5, parityRun("1", 5, ir.CellAttrs{}), parityRun("1", 110, ir.CellAttrs{})),
+				parityRow(35, parityRun("1", 5, ir.CellAttrs{}), parityRun("1", 110, ir.CellAttrs{})),
+			},
+		}),
+		"progress_monitor":   fixtures["adjacent-progress-bars"],
+		"scrolling_table":    fixtures["scrolling-table"],
+		"full_screen_redraw": fixtures["full-screen-redraw"],
+	}
 }

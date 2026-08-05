@@ -144,7 +144,7 @@ func explicitVisualGlyphs(run ir.TextRun, width int) ([]visualGlyph, bool) {
 	return glyphs, true
 }
 
-func visualCellsEqual(a visualRow, aCol int, b visualRow, bCol int) bool {
+func visualCellsEqual(a *visualRow, aCol int, b *visualRow, bCol int) bool {
 	aCell, bCell := a.cells[aCol], b.cells[bCol]
 	if !aCell.visible && !bCell.visible {
 		return true

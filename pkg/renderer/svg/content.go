@@ -2,6 +2,7 @@ package svg
 
 import (
 	"context"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -25,11 +26,7 @@ type preparedBand struct {
 	keyframes []keyframePoint[int]
 	rows      [][]*renderedRow
 	stateIDs  []string
-}
-
-func (c *canvas) prepareContent() preparedContent {
-	content, _ := c.prepareContentContext(context.Background())
-	return content
+	content   timeline[[]ir.Row]
 }
 
 func (c *canvas) prepareContentContext(ctx context.Context) (preparedContent, error) {
@@ -38,6 +35,9 @@ func (c *canvas) prepareContentContext(ctx context.Context) (preparedContent, er
 	}
 	if c.options.Layout == LayoutBands {
 		return c.prepareBands(ctx)
+	}
+	if c.options.Layout == LayoutRegions {
+		return c.prepareRegions(ctx)
 	}
 	keyframes, states := c.contentKeyframes()
 	if err := contextErr(ctx); err != nil {
@@ -51,8 +51,74 @@ func (c *canvas) prepareContentContext(ctx context.Context) (preparedContent, er
 	return prepared, contextErr(ctx)
 }
 
+func (c *canvas) prepareRegions(ctx context.Context) (preparedContent, error) {
+	regions := buildDynamicRegions(&c.plan, c.rec.Colors)
+	regions, err := c.optimizeDynamicRegions(ctx, regions)
+	if err != nil {
+		return preparedContent{}, err
+	}
+	return c.prepareLocalViewports(ctx, c.regionBands(regions))
+}
+
+func (c *canvas) regionBands(regions []dynamicRegion) []rowBand {
+	bands := make([]rowBand, len(regions))
+	for i, region := range regions {
+		x, width, content := region.x, region.width, region.content
+		if len(region.fallbackRows) == 0 {
+			x = max(0, region.x-1)
+			end := min(c.plan.width, region.x+region.width+1)
+			width = end - x
+			content = shiftRegionContent(content, region.x-x)
+		}
+		bands[i] = rowBand{x: x, y: region.y, width: width, height: region.height, content: content}
+	}
+	return bands
+}
+
+func shiftRegionContent(content timeline[[]ir.Row], columns int) timeline[[]ir.Row] {
+	if columns == 0 {
+		return content
+	}
+	shifted := content
+	shifted.points = slices.Clone(content.points)
+	for pointIndex := range shifted.points {
+		shifted.points[pointIndex].state = slices.Clone(content.points[pointIndex].state)
+		for rowIndex := range shifted.points[pointIndex].state {
+			row := &shifted.points[pointIndex].state[rowIndex]
+			row.Runs = slices.Clone(row.Runs)
+			for runIndex := range row.Runs {
+				row.Runs[runIndex].StartCol += columns
+				row.Runs[runIndex].EndCol += columns
+			}
+		}
+	}
+	return shifted
+}
+
+func (c *canvas) serializedRegionBytes(ctx context.Context, regions []dynamicRegion) (int64, error) {
+	content, err := c.prepareLocalViewports(ctx, c.regionBands(regions))
+	if err != nil {
+		return 0, err
+	}
+	counter := &countingWriter{collapseNBSP: c.config.Minify}
+	probe := *c
+	probe.w = counter
+	probe.metrics = &CandidateMetrics{}
+	probe.plan.staticRows = nil
+	probe.plan.cursor = timeline[ir.Cursor]{}
+	probe.plan.cursorEverVisible = false
+	if err := probe.render(ctx, &content); err != nil {
+		return 0, err
+	}
+	return counter.size(), nil
+}
+
 func (c *canvas) prepareBands(ctx context.Context) (preparedContent, error) {
 	bands := buildRowBands(&c.plan, c.plan.width, c.plan.height)
+	return c.prepareLocalViewports(ctx, bands)
+}
+
+func (c *canvas) prepareLocalViewports(ctx context.Context, bands []rowBand) (preparedContent, error) {
 	if err := contextErr(ctx); err != nil {
 		return preparedContent{}, err
 	}
@@ -68,6 +134,7 @@ func (c *canvas) prepareBands(ctx context.Context) (preparedContent, error) {
 			width:     band.width,
 			height:    band.height,
 			keyframes: keyframes,
+			content:   band.content,
 		}
 		stateOffsets[i] = len(allStates)
 		allStates = append(allStates, states...)
