@@ -2,6 +2,7 @@ package svg
 
 import (
 	"context"
+	"io"
 	"slices"
 	"strconv"
 	"strings"
@@ -100,14 +101,17 @@ func (c *canvas) serializedRegionBytes(ctx context.Context, regions []dynamicReg
 	if err != nil {
 		return 0, err
 	}
-	counter := &countingWriter{collapseNBSP: c.config.Minify}
+	counter := &countingWriter{}
 	probe := *c
 	probe.w = counter
 	probe.metrics = &CandidateMetrics{}
 	probe.plan.staticRows = nil
 	probe.plan.cursor = timeline[ir.Cursor]{}
 	probe.plan.cursorEverVisible = false
-	if err := probe.render(ctx, &content); err != nil {
+	if err := writeFinalSVG(counter, c.config.Minify, func(w io.Writer) error {
+		probe.w = w
+		return probe.render(ctx, &content)
+	}); err != nil {
 		return 0, err
 	}
 	return counter.size(), nil

@@ -101,22 +101,55 @@ func TestOptimizeRegionMergesKeepsTiesSeparate(t *testing.T) {
 	}
 }
 
-func TestOptimizeRegionMergeCostSerializesOnlyAffectedPair(t *testing.T) {
+func TestOptimizeRegionMergeCostUsesCompleteRegionRepresentation(t *testing.T) {
 	regions := []dynamicRegion{
 		{x: 1, width: 1, height: 1},
 		{x: 1, y: 1, width: 1, height: 1},
-		{x: 1, y: 2, width: 1, height: 1},
+		{x: 5, y: 5, width: 1, height: 1},
 	}
-	maxMeasured := 0
-	_, err := optimizeRegionMerges(regions, func(candidate []dynamicRegion) (int64, error) {
-		maxMeasured = max(maxMeasured, len(candidate))
-		return int64(len(candidate) * 100), nil
+	got, err := optimizeRegionMerges(regions, func(candidate []dynamicRegion) (int64, error) {
+		switch len(candidate) {
+		case 3:
+			return 100, nil
+		case 2:
+			if candidate[0].height == 2 || candidate[1].height == 2 {
+				return 101, nil
+			}
+			return 200, nil
+		default:
+			return 50, nil
+		}
 	}, mergeRegionBounds)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if maxMeasured > 2 {
-		t.Fatalf("cost evaluation serialized %d regions, want at most the affected pair", maxMeasured)
+	if !reflect.DeepEqual(got, regions) {
+		t.Fatalf("pair-isolated savings merged a larger complete representation: %#v", got)
+	}
+}
+
+func TestOptimizeRegionMergesMeasuresUnchangedSetOnce(t *testing.T) {
+	regions := []dynamicRegion{
+		{x: 1, width: 1, height: 1},
+		{x: 1, y: 1, width: 1, height: 1},
+		{x: 1, y: 2, width: 1, height: 1},
+		{x: 1, y: 3, width: 1, height: 1},
+	}
+	initialMeasurements := 0
+	got, err := optimizeRegionMerges(regions, func(candidate []dynamicRegion) (int64, error) {
+		if reflect.DeepEqual(candidate, regions) {
+			initialMeasurements++
+		}
+		return 100, nil
+	}, mergeRegionBounds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if initialMeasurements != 1 {
+		t.Fatalf("unchanged region set measurements = %d, want 1", initialMeasurements)
+	}
+	if !reflect.DeepEqual(got, regions) {
+		t.Fatalf("tie changed final regions: got %#v, want %#v", got, regions)
 	}
 }
 

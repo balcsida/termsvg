@@ -110,15 +110,40 @@ func TestSemanticPlaybackParityDeterministicRandomRecordings(t *testing.T) {
 	}
 }
 
+func TestRegionSemanticParityLoopAndContentStateEdges(t *testing.T) {
+	for _, loop := range []struct {
+		name  string
+		count int
+	}{{name: "infinite", count: 0}, {name: "finite", count: 2}} {
+		for _, content := range []struct {
+			name string
+			rows []ir.Row
+		}{{name: "zero-content", rows: nil}, {name: "one-content", rows: []ir.Row{parityRow(0, parityRun("x", 0, ir.CellAttrs{}))}}} {
+			t.Run(loop.name+"/"+content.name, func(t *testing.T) {
+				rec := parityRecording(2, 1, [][]ir.Row{content.rows})
+				config := renderer.DefaultConfig()
+				config.LoopCount = loop.count
+				assertSemanticParityWithConfig(t, rec, config, WithLayout(LayoutRegions))
+			})
+		}
+	}
+}
+
 func assertSemanticParity(t *testing.T, rec *ir.Recording, opts ...Option) {
+	assertSemanticParityWithConfig(t, rec, renderer.DefaultConfig(), opts...)
+}
+
+func assertSemanticParityWithConfig(t *testing.T, rec *ir.Recording, config *renderer.Config, opts ...Option) {
 	t.Helper()
 	before := cloneRecording(rec)
-	config := renderer.DefaultConfig()
 	options := DefaultOptions()
 	for _, option := range opts {
 		option(&options)
 	}
-	plan := buildRenderPlanWithOptions(rec, true, options)
+	plan, err := buildSemanticPlan(context.Background(), rec, config.ShowCursor, options.MaxFPS, config.LoopCount)
+	if err != nil {
+		t.Fatalf("build semantic plan: %v", err)
+	}
 	c := canvas{
 		rec: rec, plan: plan, config: *config, options: options,
 		classNames: rec.Colors.GenerateClassNames(), metrics: &CandidateMetrics{},
@@ -496,10 +521,9 @@ func randomRows(rng *rand.Rand, width, height int, fg, bg termcolor.ID) []ir.Row
 
 func cloneRecording(rec *ir.Recording) *ir.Recording {
 	clone := *rec
-	clone.Frames = make([]ir.Frame, len(rec.Frames))
+	clone.Frames = slices.Clone(rec.Frames)
 	for i, frame := range rec.Frames {
-		clone.Frames[i] = frame
-		clone.Frames[i].Rows = make([]ir.Row, len(frame.Rows))
+		clone.Frames[i].Rows = slices.Clone(frame.Rows)
 		for j, row := range frame.Rows {
 			clone.Frames[i].Rows[j] = row
 			clone.Frames[i].Rows[j].Runs = slices.Clone(row.Runs)

@@ -2,6 +2,9 @@ package svg
 
 import (
 	"context"
+	"encoding/binary"
+	"hash/fnv"
+	"reflect"
 	"slices"
 	"sort"
 
@@ -106,28 +109,43 @@ func optimizeRegionMerges(
 	merge func([]dynamicRegion, int, int) []dynamicRegion,
 ) ([]dynamicRegion, error) {
 	current := slices.Clone(regions)
+	cache := make(map[uint64][]regionMeasurement)
+	measureCached := func(regions []dynamicRegion) (int64, error) {
+		hash := dynamicRegionSetHash(regions)
+		for _, cached := range cache[hash] {
+			// The hash narrows lookup; DeepEqual makes the ordered content key exact.
+			if reflect.DeepEqual(cached.regions, regions) {
+				return cached.bytes, nil
+			}
+		}
+		bytes, err := measure(regions)
+		if err == nil {
+			cache[hash] = append(cache[hash], regionMeasurement{regions: slices.Clone(regions), bytes: bytes})
+		}
+		return bytes, err
+	}
+	currentBytes, err := measureCached(current)
+	if err != nil {
+		return nil, err
+	}
 	for {
 		bestSavings := int64(0)
 		var best []dynamicRegion
+		bestBytes := int64(0)
 		for i := range current {
 			for j := i + 1; j < len(current); j++ {
 				if !dynamicRegionsMergeable(&current[i], &current[j]) ||
 					mergedRegionIntersectsOther(current, i, j) {
 					continue
 				}
-				separateBytes, err := measure([]dynamicRegion{current[i], current[j]})
-				if err != nil {
-					return nil, err
-				}
 				candidate := merge(current, i, j)
-				merged := mergedRegion(candidate, &current[i], &current[j])
-				mergedBytes, err := measure([]dynamicRegion{merged})
+				candidateBytes, err := measureCached(candidate)
 				if err != nil {
 					return nil, err
 				}
-				savings := separateBytes - mergedBytes
+				savings := currentBytes - candidateBytes
 				if savings > bestSavings {
-					best, bestSavings = candidate, savings
+					best, bestBytes, bestSavings = candidate, candidateBytes, savings
 				}
 			}
 		}
@@ -135,7 +153,43 @@ func optimizeRegionMerges(
 			return current, nil
 		}
 		current = best
+		currentBytes = bestBytes
 	}
+}
+
+type regionMeasurement struct {
+	regions []dynamicRegion
+	bytes   int64
+}
+
+func dynamicRegionSetHash(regions []dynamicRegion) uint64 {
+	h := fnv.New64a()
+	var value [8]byte
+	addInt := func(n int64) {
+		binary.LittleEndian.PutUint64(value[:], uint64(n))
+		_, _ = h.Write(value[:])
+	}
+	addRows := func(rows []ir.Row) {
+		addInt(int64(len(rows)))
+		for _, row := range rows {
+			addInt(int64(semanticRowHash(row)))
+		}
+	}
+	addInt(int64(len(regions)))
+	for _, region := range regions {
+		addInt(int64(region.x))
+		addInt(int64(region.y))
+		addInt(int64(region.width))
+		addInt(int64(region.height))
+		addInt(int64(region.content.duration))
+		addInt(int64(len(region.content.points)))
+		for _, point := range region.content.points {
+			addInt(int64(point.time))
+			addRows(point.state)
+		}
+		addRows(region.fallbackRows)
+	}
+	return h.Sum64()
 }
 
 func mergedRegion(candidate []dynamicRegion, a, b *dynamicRegion) dynamicRegion {
