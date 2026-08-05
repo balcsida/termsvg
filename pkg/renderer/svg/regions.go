@@ -289,10 +289,6 @@ func rowTimelineRows(content timeline[ir.Row]) timeline[[]ir.Row] {
 	return timeline[[]ir.Row]{duration: content.duration, points: points}
 }
 
-func cropRegion(plan *renderPlan, x, y, width, height int, colors *color.Catalog) dynamicRegion {
-	return cropRegionFromGrids(plan, visualGridsForPlan(plan, colors), x, y, width, height)
-}
-
 func cropRegionFromGrids(
 	plan *renderPlan,
 	grids []visualGrid,
