@@ -118,7 +118,10 @@ func TestRegionSemanticParityLoopAndContentStateEdges(t *testing.T) {
 		for _, content := range []struct {
 			name string
 			rows []ir.Row
-		}{{name: "zero-content", rows: nil}, {name: "one-content", rows: []ir.Row{parityRow(0, parityRun("x", 0, ir.CellAttrs{}))}}} {
+		}{
+			{name: "zero-content", rows: nil},
+			{name: "one-content", rows: []ir.Row{parityRow(0, parityRun("x", 0, ir.CellAttrs{}))}},
+		} {
 			t.Run(loop.name+"/"+content.name, func(t *testing.T) {
 				rec := parityRecording(2, 1, [][]ir.Row{content.rows})
 				config := renderer.DefaultConfig()
@@ -130,6 +133,7 @@ func TestRegionSemanticParityLoopAndContentStateEdges(t *testing.T) {
 }
 
 func assertSemanticParity(t *testing.T, rec *ir.Recording, opts ...Option) {
+	t.Helper()
 	assertSemanticParityWithConfig(t, rec, renderer.DefaultConfig(), opts...)
 }
 

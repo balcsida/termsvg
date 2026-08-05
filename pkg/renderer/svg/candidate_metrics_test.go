@@ -141,7 +141,8 @@ func TestCSSMetricsCountAnimatedContentAndCursorElements(t *testing.T) {
 		t.Fatalf("CSS animation nodes = %d, want 0", metrics.AnimationNodes)
 	}
 	if metrics.AnimatedElements != 3 {
-		t.Fatalf("CSS animated elements = %d, want content parent, cursor parent, and blinking cursor", metrics.AnimatedElements)
+		t.Fatalf("CSS animated elements = %d, want content parent, cursor parent, and blinking cursor",
+			metrics.AnimatedElements)
 	}
 }
 
