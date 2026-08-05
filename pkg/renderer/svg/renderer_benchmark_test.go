@@ -44,6 +44,76 @@ func BenchmarkCandidateMatrix(b *testing.B) {
 	}
 }
 
+func BenchmarkSemanticPlanConstruction(b *testing.B) {
+	rec := staticFrames(200)
+	b.ReportAllocs()
+	for range b.N {
+		if _, err := buildSemanticPlan(context.Background(), rec, true, 0, 0); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkFramePreparation(b *testing.B) {
+	benchmarkPreparation(b, LayoutFrames)
+}
+
+func BenchmarkBandPreparation(b *testing.B) {
+	benchmarkPreparation(b, LayoutBands)
+}
+
+func BenchmarkAutoSelection(b *testing.B) {
+	rec := staticFrames(200)
+	config := renderer.DefaultConfig()
+	r := New(config, WithLayout(LayoutAuto))
+	b.ReportAllocs()
+	for range b.N {
+		if _, err := r.MeasureCandidate(context.Background(), rec); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkSelectedSerialization(b *testing.B) {
+	rec := staticFrames(200)
+	config := renderer.DefaultConfig()
+	r := New(config, WithLayout(LayoutAuto))
+	plan, err := buildSemanticPlan(context.Background(), rec, config.ShowCursor, 0, config.LoopCount)
+	if err != nil {
+		b.Fatal(err)
+	}
+	candidate, err := r.prepareSelectedCandidate(context.Background(), rec, &plan)
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		if err := r.serializeCandidate(context.Background(), rec, io.Discard, candidate); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func benchmarkPreparation(b *testing.B, layout LayoutMode) {
+	b.Helper()
+	rec := staticFrames(200)
+	config := renderer.DefaultConfig()
+	plan, err := buildSemanticPlan(context.Background(), rec, config.ShowCursor, 0, config.LoopCount)
+	if err != nil {
+		b.Fatal(err)
+	}
+	options := DefaultOptions()
+	options.Layout = layout
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		if _, err := prepareCandidate(context.Background(), rec, &plan, *config, options); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func benchmarkRecording(b *testing.B, rec *ir.Recording) {
 	b.Helper()
 	r := New(renderer.DefaultConfig())

@@ -1,6 +1,7 @@
 package svg
 
 import (
+	"context"
 	"slices"
 	"sort"
 	"time"
@@ -9,8 +10,10 @@ import (
 	"github.com/mrmarble/termsvg/pkg/ir"
 )
 
-type renderPlan struct {
+type semanticPlan struct {
 	duration          time.Duration
+	width             int
+	height            int
 	staticRows        []ir.Row
 	content           timeline[[]ir.Row]
 	cursor            timeline[ir.Cursor]
@@ -18,34 +21,73 @@ type renderPlan struct {
 	usedColors        []color.ID
 }
 
+type renderPlan = semanticPlan
+
 func buildRenderPlan(rec *ir.Recording, showCursor bool) renderPlan {
 	return buildRenderPlanWithOptions(rec, showCursor, DefaultOptions())
 }
 
 func buildRenderPlanWithOptions(rec *ir.Recording, showCursor bool, options Options) renderPlan {
-	plan := renderPlan{duration: rec.Duration}
+	plan, _ := buildSemanticPlan(context.Background(), rec, showCursor, options.MaxFPS, 1)
+	return plan
+}
+
+func buildSemanticPlan(
+	ctx context.Context,
+	rec *ir.Recording,
+	showCursor bool,
+	maxFPS int,
+	loopCount int,
+) (semanticPlan, error) {
+	if err := contextErr(ctx); err != nil {
+		return semanticPlan{}, err
+	}
+	plan := semanticPlan{duration: rec.Duration, width: rec.Width, height: rec.Height}
 	content := make([]timelinePoint[[]ir.Row], 0, len(rec.Frames))
 	for _, frame := range rec.Frames {
 		content = append(content, timelinePoint[[]ir.Row]{time: frame.Time, state: frame.Rows})
 	}
-	plan.content = quantizeTimeline(
-		normalizeTimeline(rec.Duration, content, rowsEqual), options.MaxFPS, rowsEqual,
-	)
+	plan.content = normalizeTimeline(rec.Duration, content, rowsEqual)
+	if err := contextErr(ctx); err != nil {
+		return semanticPlan{}, err
+	}
+	plan.content = quantizeTimeline(plan.content, maxFPS, rowsEqual)
+	if err := contextErr(ctx); err != nil {
+		return semanticPlan{}, err
+	}
 	plan.hoistStaticRows(rec.Height)
+	if err := contextErr(ctx); err != nil {
+		return semanticPlan{}, err
+	}
 	plan.hoistStaticCells(rec.Width, rec.Height, rec.Colors)
+	if err := contextErr(ctx); err != nil {
+		return semanticPlan{}, err
+	}
 
 	if showCursor {
 		cursor := make([]timelinePoint[ir.Cursor], 0, len(rec.Frames))
 		for _, frame := range rec.Frames {
 			cursor = append(cursor, timelinePoint[ir.Cursor]{time: frame.Time, state: frame.Cursor})
 		}
-		plan.cursor = quantizeTimeline(
-			normalizeTimeline(rec.Duration, cursor, cursorStatesEqual), options.MaxFPS, cursorStatesEqual,
-		)
+		plan.cursor = normalizeTimeline(rec.Duration, cursor, cursorStatesEqual)
+		plan.cursor = quantizeTimeline(plan.cursor, maxFPS, cursorStatesEqual)
 		plan.refreshCursorVisibility()
 	}
+	if err := contextErr(ctx); err != nil {
+		return semanticPlan{}, err
+	}
+	plan.pruneZeroDwellCursorEndpoint(loopCount)
 	plan.usedColors = usedColorIDs(rec, plan.staticRows, plan.content.points)
-	return plan
+	return plan, contextErr(ctx)
+}
+
+func contextErr(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+		return nil
+	}
 }
 
 func (p *renderPlan) pruneZeroDwellCursorEndpoint(loopCount int) {

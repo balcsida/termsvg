@@ -1,12 +1,109 @@
 package svg
 
 import (
+	"bytes"
 	"context"
 	"io"
+	"reflect"
 	"testing"
 
 	"github.com/mrmarble/termsvg/pkg/renderer"
 )
+
+type candidateWriter struct {
+	w            io.Writer
+	metrics      *CandidateMetrics
+	pendingC2    bool
+	inDefs       bool
+	pendingTag   []byte
+	elementStack []int
+	nextElement  int
+	animatedAt   map[int]bool
+}
+
+func (w *candidateWriter) Write(p []byte) (int, error) {
+	w.metrics.FinalBytes += int64(len(p))
+	w.countElements(p)
+	return w.w.Write(p)
+}
+
+func (w *candidateWriter) finish() {
+	w.metrics.AnimatedElements = len(w.animatedAt)
+}
+
+func (w *candidateWriter) countElements(p []byte) {
+	if len(w.pendingTag) > 0 {
+		p = append(w.pendingTag, p...)
+		w.pendingTag = nil
+	}
+	for len(p) > 0 {
+		start := bytes.IndexByte(p, '<')
+		if start < 0 {
+			return
+		}
+		p = p[start+1:]
+		end := bytes.IndexByte(p, '>')
+		if end < 0 {
+			w.pendingTag = append(w.pendingTag[:0], '<')
+			w.pendingTag = append(w.pendingTag, p...)
+			return
+		}
+		token := bytes.TrimSpace(p[:end])
+		p = p[end+1:]
+		if len(token) == 0 || token[0] == '!' || token[0] == '?' {
+			continue
+		}
+		if token[0] == '/' {
+			w.elementStack = w.elementStack[:len(w.elementStack)-1]
+			if string(bytes.TrimSpace(token[1:])) == "defs" {
+				w.inDefs = false
+			}
+			continue
+		}
+		name := token
+		if space := bytes.IndexAny(name, " \t\r\n/"); space >= 0 {
+			name = name[:space]
+		}
+		nameString := string(name)
+		w.countElement(nameString)
+		if nameString == "animate" || nameString == "animateTransform" || nameString == "animateMotion" {
+			if w.animatedAt == nil {
+				w.animatedAt = map[int]bool{}
+			}
+			if len(w.elementStack) > 0 {
+				w.animatedAt[w.elementStack[len(w.elementStack)-1]] = true
+			}
+		}
+		if string(name) == "defs" {
+			w.inDefs = true
+		}
+		if !bytes.HasSuffix(token, []byte{'/'}) {
+			w.nextElement++
+			w.elementStack = append(w.elementStack, w.nextElement)
+		}
+	}
+}
+
+func (w *candidateWriter) countElement(name string) {
+	w.metrics.XMLNodes++
+	if w.inDefs || name == "defs" {
+		w.metrics.DefinitionNodes++
+	} else {
+		w.metrics.ActiveNodes++
+	}
+	switch name {
+	case "text":
+		w.metrics.TextNodes++
+	case "rect":
+		w.metrics.RectNodes++
+	case "g":
+		w.metrics.GroupNodes++
+	case "use":
+		w.metrics.UseNodes++
+	case "animate", "animateTransform", "animateMotion":
+		w.metrics.AnimationNodes++
+	}
+}
 
 func TestMeasureCandidateReportsSerializedStructure(t *testing.T) {
 	r := New(renderer.DefaultConfig(), WithAnimation(AnimationSMIL))
@@ -24,6 +121,48 @@ func TestMeasureCandidateReportsSerializedStructure(t *testing.T) {
 	}
 	if metrics.MaxTranslatedWidth <= 0 || metrics.MaxTranslatedArea <= 0 {
 		t.Fatalf("translated surface metrics: %#v", metrics)
+	}
+}
+
+func TestPreparedMetricsMatchSerializedStructure(t *testing.T) {
+	for _, variant := range parityOptions {
+		t.Run(variant.name, func(t *testing.T) {
+			rec := experimentalRecording()
+			config := renderer.DefaultConfig()
+			options := DefaultOptions()
+			for _, apply := range variant.options {
+				apply(&options)
+			}
+			plan, err := buildSemanticPlan(context.Background(), rec, config.ShowCursor, options.MaxFPS, config.LoopCount)
+			if err != nil {
+				t.Fatal(err)
+			}
+			candidate, err := prepareCandidate(context.Background(), rec, &plan, *config, options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			parsed := CandidateMetrics{}
+			writer := &candidateWriter{w: io.Discard, metrics: &parsed}
+			r := New(config, variant.options...)
+			if err := r.serializeCandidate(context.Background(), rec, writer, candidate); err != nil {
+				t.Fatal(err)
+			}
+			writer.finish()
+
+			got := candidate.metrics
+			got.FinalBytes = 0
+			got.StateDefinitions = 0
+			got.MaxUseDepth = 0
+			got.MaxTranslatedWidth = 0
+			got.MaxTranslatedArea = 0
+			got.LocalViewportCount = 0
+			got.MaxViewportWidth = 0
+			got.MaxViewportHeight = 0
+			parsed.FinalBytes = 0
+			if !reflect.DeepEqual(got, parsed) {
+				t.Fatalf("prepared metrics = %#v; serialized = %#v", got, parsed)
+			}
+		})
 	}
 }
 

@@ -1,6 +1,7 @@
 package svg
 
 import (
+	"context"
 	"strconv"
 	"strings"
 
@@ -27,20 +28,34 @@ type preparedBand struct {
 }
 
 func (c *canvas) prepareContent() preparedContent {
+	content, _ := c.prepareContentContext(context.Background())
+	return content
+}
+
+func (c *canvas) prepareContentContext(ctx context.Context) (preparedContent, error) {
+	if err := contextErr(ctx); err != nil {
+		return preparedContent{}, err
+	}
 	if c.options.Layout == LayoutBands {
-		return c.prepareBands()
+		return c.prepareBands(ctx)
 	}
 	keyframes, states := c.contentKeyframes()
+	if err := contextErr(ctx); err != nil {
+		return preparedContent{}, err
+	}
 	frames, defs := c.collectRows(states)
 	prepared := preparedContent{frameKeyframes: keyframes, frameRows: frames, rowDefs: defs}
 	if c.options.FrameSwitch == FrameSwitchHref && len(keyframes) > 1 {
 		prepared.frameStateIDs = stateIDs("_f", len(frames))
 	}
-	return prepared
+	return prepared, contextErr(ctx)
 }
 
-func (c *canvas) prepareBands() preparedContent {
-	bands := buildRowBands(&c.plan, c.rec.Width, c.rec.Height)
+func (c *canvas) prepareBands(ctx context.Context) (preparedContent, error) {
+	bands := buildRowBands(&c.plan, c.plan.width, c.plan.height)
+	if err := contextErr(ctx); err != nil {
+		return preparedContent{}, err
+	}
 	prepared := preparedContent{bands: make([]preparedBand, len(bands))}
 	allStates := make([][]ir.Row, 0)
 	stateOffsets := make([]int, len(bands)+1)
@@ -57,9 +72,15 @@ func (c *canvas) prepareBands() preparedContent {
 		stateOffsets[i] = len(allStates)
 		allStates = append(allStates, states...)
 	}
+	if err := contextErr(ctx); err != nil {
+		return preparedContent{}, err
+	}
 	stateOffsets[len(bands)] = len(allStates)
 
 	frames, defs := c.collectRows(allStates)
+	if err := contextErr(ctx); err != nil {
+		return preparedContent{}, err
+	}
 	prepared.rowDefs = defs
 	for i := range prepared.bands {
 		prepared.bands[i].rows = frames[stateOffsets[i]:stateOffsets[i+1]]
@@ -81,7 +102,7 @@ func (c *canvas) prepareBands() preparedContent {
 		}
 		prepared.bands[i].name = name
 	}
-	return prepared
+	return prepared, contextErr(ctx)
 }
 
 func contentKeyframesFor(content timeline[[]ir.Row]) ([]keyframePoint[int], [][]ir.Row) {

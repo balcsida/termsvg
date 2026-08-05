@@ -18,8 +18,16 @@ import (
 
 // Renderer implements the renderer.Renderer interface for SVG output.
 type Renderer struct {
-	config  renderer.Config
-	options Options
+	config              renderer.Config
+	options             Options
+	onSemanticPlanBuild func()
+}
+
+func (r *Renderer) buildSemanticPlan(ctx context.Context, rec *ir.Recording) (semanticPlan, error) {
+	if r.onSemanticPlanBuild != nil {
+		r.onSemanticPlanBuild()
+	}
+	return buildSemanticPlan(ctx, rec, r.config.ShowCursor, r.options.MaxFPS, r.config.LoopCount)
 }
 
 // canvas holds rendering state
@@ -46,6 +54,13 @@ type backgroundSpan struct {
 	startCol int
 	endCol   int
 	colorID  color.ID
+}
+
+type preparedCandidate struct {
+	plan    *semanticPlan
+	options Options
+	content preparedContent
+	metrics CandidateMetrics
 }
 
 type countingWriter struct {
@@ -102,36 +117,15 @@ func (r *Renderer) Render(ctx context.Context, rec *ir.Recording, w io.Writer) e
 	if err := r.options.Validate(); err != nil {
 		return err
 	}
-	if r.options.Layout == LayoutAuto {
-		layout, err := r.selectAutoLayout(ctx, rec)
-		if err != nil {
-			return err
-		}
-		options := r.options
-		options.Layout = layout
-		return r.renderWithOptions(ctx, rec, w, options)
+	plan, err := r.buildSemanticPlan(ctx, rec)
+	if err != nil {
+		return err
 	}
-	return r.renderWithOptions(ctx, rec, w, r.options)
-}
-
-func (r *Renderer) selectAutoLayout(ctx context.Context, rec *ir.Recording) (LayoutMode, error) {
-	best := LayoutFrames
-	bestBytes := int64(-1)
-	for _, layout := range []LayoutMode{LayoutFrames, LayoutBands} {
-		options := r.options
-		options.Layout = layout
-		metrics, err := r.renderCandidate(ctx, rec, io.Discard, options)
-		if err != nil {
-			return "", err
-		}
-		// Frames win deterministic ties because they are the compatibility
-		// layout and are measured first.
-		if bestBytes < 0 || metrics.FinalBytes < bestBytes {
-			best = layout
-			bestBytes = metrics.FinalBytes
-		}
+	candidate, err := r.prepareSelectedCandidate(ctx, rec, &plan)
+	if err != nil {
+		return err
 	}
-	return best, nil
+	return r.serializeCandidate(ctx, rec, w, candidate)
 }
 
 // MeasureCandidate renders the configured candidate to a sink and reports its
@@ -143,56 +137,105 @@ func (r *Renderer) MeasureCandidate(ctx context.Context, rec *ir.Recording) (Can
 	if err := r.options.Validate(); err != nil {
 		return CandidateMetrics{}, err
 	}
-	options := r.options
-	if options.Layout == LayoutAuto {
-		layout, err := r.selectAutoLayout(ctx, rec)
-		if err != nil {
+	plan, err := r.buildSemanticPlan(ctx, rec)
+	if err != nil {
+		return CandidateMetrics{}, err
+	}
+	candidate, err := r.prepareSelectedCandidate(ctx, rec, &plan)
+	if err != nil {
+		return CandidateMetrics{}, err
+	}
+	if candidate.metrics.FinalBytes == 0 {
+		if err := r.measureCandidate(ctx, rec, candidate); err != nil {
 			return CandidateMetrics{}, err
 		}
-		options.Layout = layout
 	}
-	return r.renderCandidate(ctx, rec, io.Discard, options)
+	return candidate.metrics, nil
 }
 
-func (r *Renderer) renderWithOptions(
+func (r *Renderer) prepareSelectedCandidate(
 	ctx context.Context,
 	rec *ir.Recording,
-	w io.Writer,
-	options Options,
-) error {
-	_, err := r.renderCandidate(ctx, rec, w, options)
-	return err
+	plan *semanticPlan,
+) (*preparedCandidate, error) {
+	if r.options.Layout != LayoutAuto {
+		return prepareCandidate(ctx, rec, plan, r.config, r.options)
+	}
+	options := r.options
+	options.Layout = LayoutFrames
+	frames, err := prepareCandidate(ctx, rec, plan, r.config, options)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.measureCandidate(ctx, rec, frames); err != nil {
+		return nil, err
+	}
+	options.Layout = LayoutBands
+	bands, err := prepareCandidate(ctx, rec, plan, r.config, options)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.measureCandidate(ctx, rec, bands); err != nil {
+		return nil, err
+	}
+	return selectPreparedCandidate(frames, bands), nil
 }
 
-func (r *Renderer) renderCandidate(
+func selectPreparedCandidate(frames, bands *preparedCandidate) *preparedCandidate {
+	if bands.metrics.FinalBytes < frames.metrics.FinalBytes {
+		return bands
+	}
+	return frames
+}
+
+func prepareCandidate(
 	ctx context.Context,
 	rec *ir.Recording,
-	w io.Writer,
+	plan *semanticPlan,
+	config renderer.Config,
 	options Options,
-) (CandidateMetrics, error) {
-	metrics := CandidateMetrics{}
-	candidate := &candidateWriter{w: w, metrics: &metrics, collapseNBSP: r.config.Minify}
-	buf := bufio.NewWriterSize(candidate, 64*1024)
-	plan := buildRenderPlanWithOptions(rec, r.config.ShowCursor, options)
-	plan.pruneZeroDwellCursorEndpoint(r.config.LoopCount)
+) (*preparedCandidate, error) {
 	c := &canvas{
-		w:          buf,
 		rec:        rec,
-		plan:       plan,
-		config:     r.config,
+		plan:       *plan,
+		config:     config,
 		options:    options,
 		classNames: rec.Colors.GenerateClassNames(),
-		metrics:    &metrics,
 	}
+	content, err := c.prepareContentContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	candidate := &preparedCandidate{plan: plan, options: options, content: content}
+	addPreparedMetrics(&candidate.metrics, &content, options, c.contentWidth(), c.contentHeight())
+	addStructuralMetrics(&candidate.metrics, c, &content)
+	return candidate, nil
+}
 
-	if err := c.render(ctx); err != nil {
-		return metrics, err
+func (r *Renderer) measureCandidate(ctx context.Context, rec *ir.Recording, candidate *preparedCandidate) error {
+	counter := &countingWriter{collapseNBSP: r.config.Minify}
+	if err := r.serializeCandidate(ctx, rec, counter, candidate); err != nil {
+		return err
 	}
-	if err := buf.Flush(); err != nil {
-		return metrics, err
+	candidate.metrics.FinalBytes = counter.size()
+	return nil
+}
+
+func (r *Renderer) serializeCandidate(
+	ctx context.Context,
+	rec *ir.Recording,
+	w io.Writer,
+	candidate *preparedCandidate,
+) error {
+	buf := bufio.NewWriterSize(w, 64*1024)
+	c := &canvas{
+		w: buf, rec: rec, plan: *candidate.plan, config: r.config, options: candidate.options,
+		classNames: rec.Colors.GenerateClassNames(), metrics: &candidate.metrics,
 	}
-	candidate.finish()
-	return metrics, nil
+	if err := c.render(ctx, &candidate.content); err != nil {
+		return err
+	}
+	return buf.Flush()
 }
 
 func (w *countingWriter) Write(p []byte) (int, error) {
@@ -227,11 +270,17 @@ func (w *countingWriter) size() int64 {
 }
 
 func (c *canvas) contentWidth() int {
-	return c.rec.Width * ColWidth
+	if c.plan.width == 0 {
+		return c.rec.Width * ColWidth
+	}
+	return c.plan.width * ColWidth
 }
 
 func (c *canvas) contentHeight() int {
-	return c.rec.Height * RowHeight
+	if c.plan.height == 0 {
+		return c.rec.Height * RowHeight
+	}
+	return c.plan.height * RowHeight
 }
 
 func (c *canvas) paddedWidth() int {
@@ -245,16 +294,13 @@ func (c *canvas) paddedHeight() int {
 	return c.contentHeight() + 2*Padding
 }
 
-func (c *canvas) render(ctx context.Context) error {
+func (c *canvas) render(ctx context.Context, content *preparedContent) error {
 	// Check for cancellation
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	default:
 	}
-
-	content := c.prepareContent()
-	addPreparedMetrics(c.metrics, &content, c.options, c.contentWidth(), c.contentHeight())
 
 	// SVG header
 	width := c.paddedWidth()
@@ -276,16 +322,16 @@ func (c *canvas) render(ctx context.Context) error {
 	fmt.Fprintf(c.w, `<defs><clipPath id="clip"><rect width="%d" height="%d"/></clipPath>`,
 		c.contentWidth(), c.contentHeight())
 	c.writeRowDefs(content.rowDefs)
-	c.writeStateDefs(&content)
+	c.writeStateDefs(content)
 	fmt.Fprint(c.w, `</defs>`)
 
 	fmt.Fprintf(c.w, `<g transform="translate(%d,%d)" clip-path="url(#clip)">`, Padding, contentY)
 
-	c.writeStyles(&content)
+	c.writeStyles(content)
 	for _, row := range c.plan.staticRows {
 		c.writeRow(c.w, row)
 	}
-	c.writeContent(&content)
+	c.writeContent(content)
 	c.writeCursor()
 
 	fmt.Fprint(c.w, `</g></svg>`)
