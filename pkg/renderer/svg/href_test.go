@@ -4,6 +4,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mrmarble/termsvg/pkg/ir"
+	"github.com/mrmarble/termsvg/pkg/renderer"
 )
 
 func TestHrefFrameSwitchRequiresSMIL(t *testing.T) {
@@ -56,6 +59,32 @@ func TestWriteHrefSequenceUsesSingleRuntimeUse(t *testing.T) {
 	got := out.String()
 	if strings.Count(got, "<use ") != 1 || !strings.HasPrefix(got, `<use href="#_f1">`) {
 		t.Fatalf("href sequence = %q; want one use starting at _f1", got)
+	}
+}
+
+func TestWriteStateDefinitionElidesOnlyOneGeneratedChild(t *testing.T) {
+	tests := []struct {
+		name   string
+		minify bool
+		rows   []*renderedRow
+		want   string
+	}{
+		{name: "empty", rows: nil, want: `<g id="_f0"></g>`},
+		{name: "empty minified", minify: true, rows: nil, want: `<g id="_f0"/>`},
+		{name: "text", rows: []*renderedRow{{row: ir.Row{Runs: []ir.TextRun{{Text: "x"}}}, svg: `<text y="20">x</text>`}}, want: `<text id="_f0" y="20">x</text>`},
+		{name: "rect", rows: []*renderedRow{{row: ir.Row{Runs: []ir.TextRun{{Text: "x"}}}, svg: `<rect y="0" width="12"/>`}}, want: `<rect id="_f0" y="0" width="12"/>`},
+		{name: "multiple", rows: []*renderedRow{{row: ir.Row{Runs: []ir.TextRun{{Text: "x"}}}, svg: `<text>x</text>`}, {row: ir.Row{Runs: []ir.TextRun{{Text: "y"}}}, svg: `<text>y</text>`}}, want: `<g id="_f0"><text>x</text><text>y</text></g>`},
+		{name: "row use", rows: []*renderedRow{{id: "a"}}, want: `<use id="_f0" href="#a"/>`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var out strings.Builder
+			canvas := canvas{w: &out, rec: createTestRecording(), config: renderer.Config{Minify: tt.minify}}
+			canvas.writeStateDefinition("_f0", tt.rows)
+			if got := out.String(); got != tt.want {
+				t.Fatalf("state definition = %q; want %q", got, tt.want)
+			}
+		})
 	}
 }
 

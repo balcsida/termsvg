@@ -101,13 +101,17 @@ func addStructuralMetrics(metrics *CandidateMetrics, c *canvas, content *prepare
 	}
 
 	for i := range content.frameStateIDs {
-		addMetric(metrics, true, "g", 1)
+		if c.stateElementCount(content.frameRows[i]) != 1 {
+			addMetric(metrics, true, "g", 1)
+		}
 		addStateRowsMetrics(metrics, c, true, content.frameRows[i:i+1])
 	}
 	for bandIndex := range content.bands {
 		band := &content.bands[bandIndex]
 		for i := range band.stateIDs {
-			addMetric(metrics, true, "g", 1)
+			if c.stateElementCount(band.rows[i]) != 1 {
+				addMetric(metrics, true, "g", 1)
+			}
 			addStateRowsMetrics(metrics, c, true, band.rows[i:i+1])
 		}
 	}
@@ -190,12 +194,12 @@ func addUseExpansionMetrics(metrics *CandidateMetrics, c *canvas, content *prepa
 	}
 	for i, id := range content.frameStateIDs {
 		nodes, uses := rowUses(content.frameRows[i])
-		graph[id] = definitionNode{nodes: nodes + 1, uses: uses}
+		graph[id] = definitionNode{nodes: max(nodes, 1), uses: uses}
 	}
 	for bi := range content.bands {
 		for i, id := range content.bands[bi].stateIDs {
 			nodes, uses := rowUses(content.bands[bi].rows[i])
-			graph[id] = definitionNode{nodes: nodes + 1, uses: uses}
+			graph[id] = definitionNode{nodes: max(nodes, 1), uses: uses}
 		}
 	}
 	costs := make(map[string]uint64, len(graph))

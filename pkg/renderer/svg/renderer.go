@@ -642,8 +642,17 @@ func (c *canvas) rowDefinition(row *renderedRow, id string) string {
 }
 
 func addElementID(svg, id string) string {
-	for _, prefix := range []string{"<rect", "<text"} {
-		if strings.HasPrefix(svg, prefix) {
+	end := strings.IndexByte(svg, '>')
+	if end < 0 {
+		return `<g id="` + id + `">` + svg + `</g>`
+	}
+	start := svg[:end+1]
+	for _, name := range []string{"rect", "text", "use"} {
+		prefix := "<" + name
+		if strings.HasPrefix(start, prefix) && (len(start) == len(prefix)+1 || start[len(prefix)] == ' ' || start[len(prefix)] == '/') {
+			if strings.Contains(start, ` id="`) {
+				return svg
+			}
 			return prefix + ` id="` + id + `"` + strings.TrimPrefix(svg, prefix)
 		}
 	}
@@ -714,26 +723,46 @@ func (c *canvas) writeStateDefs(content *preparedContent) {
 		return
 	}
 	for i, id := range content.frameStateIDs {
-		if c.config.Minify && !renderedRowsHaveOutput(content.frameRows[i]) {
-			fmt.Fprintf(c.w, `<g id="%s"/>`, id)
-			continue
-		}
-		fmt.Fprintf(c.w, `<g id="%s">`, id)
-		c.writeFrameRows(content.frameRows[i])
-		fmt.Fprint(c.w, `</g>`)
+		c.writeStateDefinition(id, content.frameRows[i])
 	}
 	for bandIndex := range content.bands {
 		band := &content.bands[bandIndex]
 		for i, id := range band.stateIDs {
-			if c.config.Minify && !renderedRowsHaveOutput(band.rows[i]) {
-				fmt.Fprintf(c.w, `<g id="%s"/>`, id)
-				continue
-			}
-			fmt.Fprintf(c.w, `<g id="%s">`, id)
-			c.writeFrameRows(band.rows[i])
-			fmt.Fprint(c.w, `</g>`)
+			c.writeStateDefinition(id, band.rows[i])
 		}
 	}
+}
+
+func (c *canvas) writeStateDefinition(id string, rows []*renderedRow) {
+	children := c.stateElementCount(rows)
+	if children == 1 {
+		var body strings.Builder
+		writer := c.w
+		c.w = &body
+		c.writeFrameRows(rows)
+		c.w = writer
+		fmt.Fprint(c.w, addElementID(body.String(), id))
+		return
+	}
+	if children == 0 && c.config.Minify {
+		fmt.Fprintf(c.w, `<g id="%s"/>`, id)
+		return
+	}
+	fmt.Fprintf(c.w, `<g id="%s">`, id)
+	c.writeFrameRows(rows)
+	fmt.Fprint(c.w, `</g>`)
+}
+
+func (c *canvas) stateElementCount(rows []*renderedRow) int {
+	count := 0
+	for _, row := range rows {
+		if row.id != "" {
+			count++
+		} else {
+			count += c.rowElementCount(row.row)
+		}
+	}
+	return count
 }
 
 func (c *canvas) writeContent(content *preparedContent) {
