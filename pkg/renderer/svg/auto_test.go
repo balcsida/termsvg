@@ -159,6 +159,19 @@ func TestAutoRenderBuildsSemanticPlanOnce(t *testing.T) {
 	}
 }
 
+func TestAutoRenderSerializesOnlySelectedCandidate(t *testing.T) {
+	r := New(renderer.DefaultConfig(), WithLayout(LayoutAuto))
+	plans, serializations := 0, 0
+	r.onSemanticPlanBuild = func() { plans++ }
+	r.onCandidateSerialize = func() { serializations++ }
+	if err := r.Render(context.Background(), experimentalRecording(), io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if plans != 1 || serializations != 1 {
+		t.Fatalf("semantic plans/serializations = %d/%d; want 1/1", plans, serializations)
+	}
+}
+
 func cloneSemanticPlan(source *semanticPlan) semanticPlan {
 	plan := *source
 	cloneRows := func(rows []ir.Row) []ir.Row {

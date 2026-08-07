@@ -116,7 +116,11 @@ func (c *canvas) optimizeDynamicRegionsWithBudget(
 ) ([]dynamicRegion, error) {
 	grids := visualGridsForPlan(&c.plan, c.rec.Colors)
 	return optimizeRegionMergesWithBudget(regions, evaluationBudget, func(candidate []dynamicRegion) (int64, error) {
-		return c.serializedRegionBytes(ctx, candidate)
+		content, err := c.prepareLocalViewports(ctx, c.regionBands(candidate))
+		if err != nil {
+			return 0, err
+		}
+		return costPreparedContent(ctx, c, &content)
 	}, func(candidate []dynamicRegion, i, j int) []dynamicRegion {
 		return mergeDynamicRegionsFromGrids(&c.plan, grids, candidate, i, j)
 	})

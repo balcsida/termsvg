@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -19,9 +20,10 @@ import (
 
 // Renderer implements the renderer.Renderer interface for SVG output.
 type Renderer struct {
-	config              renderer.Config
-	options             Options
-	onSemanticPlanBuild func()
+	config               renderer.Config
+	options              Options
+	onSemanticPlanBuild  func()
+	onCandidateSerialize func()
 }
 
 // canvas holds rendering state
@@ -55,6 +57,7 @@ type preparedCandidate struct {
 	options Options
 	content preparedContent
 	metrics CandidateMetrics
+	cost    preparedCandidateCost
 }
 
 type countingWriter struct {
@@ -220,17 +223,19 @@ func prepareCandidate(
 	}
 	candidate := &preparedCandidate{plan: plan, options: options, content: content}
 	addPreparedMetrics(&candidate.metrics, &content, options, c.contentWidth(), c.contentHeight())
-	addStructuralMetrics(&candidate.metrics, c, &content)
+	if err := addStructuralMetrics(&candidate.metrics, c, &content); err != nil {
+		return nil, err
+	}
+	candidate.cost = buildPreparedCandidateCost(c, candidate)
 	return candidate, nil
 }
 
 func (r *Renderer) measureCandidate(ctx context.Context, rec *ir.Recording, candidate *preparedCandidate) error {
-	counter := &countingWriter{}
-	write := func(w io.Writer) error { return r.serializeCandidate(ctx, rec, w, candidate) }
-	if err := writeFinalSVG(counter, r.config.Minify, write); err != nil {
+	bytes, err := costPreparedCandidate(ctx, rec, &r.config, candidate)
+	if err != nil {
 		return err
 	}
-	candidate.metrics.FinalBytes = counter.size()
+	candidate.metrics.FinalBytes = bytes
 	return nil
 }
 
@@ -247,6 +252,9 @@ func (r *Renderer) serializeCandidate(
 	w io.Writer,
 	candidate *preparedCandidate,
 ) error {
+	if r.onCandidateSerialize != nil {
+		r.onCandidateSerialize()
+	}
 	buf := bufio.NewWriterSize(w, 64*1024)
 	c := &canvas{
 		w: buf, rec: rec, plan: *candidate.plan, config: r.config, options: candidate.options,
@@ -322,10 +330,7 @@ func (c *canvas) render(ctx context.Context, content *preparedContent) error {
 	default:
 	}
 
-	// SVG header
-	width := c.paddedWidth()
-	height := c.paddedHeight()
-	fmt.Fprintf(c.w, `<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve" width="%d" height="%d">`, width, height)
+	c.writeSVGOpen()
 
 	if c.config.ShowWindow {
 		c.writeWindow()
@@ -339,13 +344,8 @@ func (c *canvas) render(ctx context.Context, content *preparedContent) error {
 		contentY = Padding * HeaderSize
 	}
 
-	fmt.Fprintf(c.w, `<defs><clipPath id="clip"><rect width="%d" height="%d"/></clipPath>`,
-		c.contentWidth(), c.contentHeight())
-	c.writeRowDefs(content.rowDefs)
-	c.writeStateDefs(content)
-	fmt.Fprint(c.w, `</defs>`)
-
-	fmt.Fprintf(c.w, `<g transform="translate(%d,%d)" clip-path="url(#clip)">`, Padding, contentY)
+	c.writeDefs(content)
+	c.writeContentGroupOpen(contentY)
 
 	c.writeStyles(content)
 	for _, row := range c.plan.staticRows {
@@ -359,6 +359,27 @@ func (c *canvas) render(ctx context.Context, content *preparedContent) error {
 	return nil
 }
 
+func (c *canvas) writeSVGOpen() {
+	xmlSpace := ` xml:space="preserve"`
+	if c.config.Minify {
+		xmlSpace = ""
+	}
+	fmt.Fprintf(c.w, `<svg xmlns="http://www.w3.org/2000/svg"%s width="%s" height="%s">`,
+		xmlSpace, c.xmlInt(c.paddedWidth()), c.xmlInt(c.paddedHeight()))
+}
+
+func (c *canvas) writeDefs(content *preparedContent) {
+	fmt.Fprintf(c.w, `<defs><clipPath id="clip"><rect width="%s" height="%s"/></clipPath>`,
+		c.xmlInt(c.contentWidth()), c.xmlInt(c.contentHeight()))
+	c.writeRowDefs(content.rowDefs)
+	c.writeStateDefs(content)
+	fmt.Fprint(c.w, `</defs>`)
+}
+
+func (c *canvas) writeContentGroupOpen(contentY int) {
+	fmt.Fprintf(c.w, `<g transform="translate(%s,%s)" clip-path="url(#clip)">`, c.xmlInt(Padding), c.xmlInt(contentY))
+}
+
 func (c *canvas) writeBackground() {
 	bgHex := color.RGBAtoHex(c.config.Theme.WindowBackground)
 	fmt.Fprintf(c.w, `<rect width="100%%" height="100%%" fill="%s"/>`, bgHex)
@@ -369,14 +390,14 @@ func (c *canvas) writeWindow() {
 
 	// Window background with rounded corners
 	bgHex := color.RGBAtoHex(theme.WindowBackground)
-	fmt.Fprintf(c.w, `<rect rx="%d" width="100%%" height="100%%" fill="%s"/>`, windowCornerRadius, bgHex)
+	fmt.Fprintf(c.w, `<rect rx="%s" width="100%%" height="100%%" fill="%s"/>`, c.xmlInt(windowCornerRadius), bgHex)
 
 	// Window buttons (close, minimize, maximize)
 	buttonY := Padding
 	for i, btnColor := range theme.WindowButtons {
 		btnHex := color.RGBAtoHex(btnColor)
 		x := Padding + i*windowButtonSpacing
-		fmt.Fprintf(c.w, `<circle cx="%d" cy="%d" r="%d" fill="%s"/>`, x, buttonY, windowButtonRadius, btnHex)
+		fmt.Fprintf(c.w, `<circle cx="%s" cy="%s" r="%s" fill="%s"/>`, c.xmlInt(x), c.xmlInt(buttonY), c.xmlInt(windowButtonRadius), btnHex)
 	}
 }
 
@@ -645,6 +666,10 @@ func (c *canvas) writeStateDefs(content *preparedContent) {
 		return
 	}
 	for i, id := range content.frameStateIDs {
+		if c.config.Minify && !renderedRowsHaveOutput(content.frameRows[i]) {
+			fmt.Fprintf(c.w, `<g id="%s"/>`, id)
+			continue
+		}
 		fmt.Fprintf(c.w, `<g id="%s">`, id)
 		c.writeFrameRows(content.frameRows[i])
 		fmt.Fprint(c.w, `</g>`)
@@ -652,6 +677,10 @@ func (c *canvas) writeStateDefs(content *preparedContent) {
 	for bandIndex := range content.bands {
 		band := &content.bands[bandIndex]
 		for i, id := range band.stateIDs {
+			if c.config.Minify && !renderedRowsHaveOutput(band.rows[i]) {
+				fmt.Fprintf(c.w, `<g id="%s"/>`, id)
+				continue
+			}
 			fmt.Fprintf(c.w, `<g id="%s">`, id)
 			c.writeFrameRows(band.rows[i])
 			fmt.Fprint(c.w, `</g>`)
@@ -694,33 +723,44 @@ func (c *canvas) writeFrames(
 
 func (c *canvas) writeBands(bands []preparedBand) {
 	for bandIndex := range bands {
-		band := &bands[bandIndex]
-		width := band.width * ColWidth
-		height := band.height * RowHeight
-		fmt.Fprintf(c.w, `<svg x="%d" y="%d" width="%d" height="%d" overflow="hidden">`,
-			band.x*ColWidth, band.y*RowHeight, width, height)
-		if len(band.keyframes) <= 1 {
-			if len(band.rows) > 0 {
-				c.writeFrameRows(band.rows[len(band.rows)-1])
-			}
-			fmt.Fprint(c.w, `</svg>`)
-			continue
-		}
-		if c.options.FrameSwitch == FrameSwitchHref {
-			c.writeHrefSequence(band.keyframes, band.stateIDs)
-			fmt.Fprint(c.w, `</svg>`)
-			continue
-		}
-		if c.options.Animation == AnimationSMIL {
-			fmt.Fprint(c.w, `<g>`)
-			c.writeSMILTranslate(c.w, band.keyframes, width)
-		} else {
-			fmt.Fprintf(c.w, `<g style="animation:%s %s %s step-end">`,
-				band.name, animationDuration(c.plan.duration), c.loopCount())
-		}
-		c.writeStateStrip(band.rows, width)
-		fmt.Fprint(c.w, `</g></svg>`)
+		c.writeBand(&bands[bandIndex])
 	}
+}
+
+func (c *canvas) writeBand(band *preparedBand) {
+	width := band.width * ColWidth
+	height := band.height * RowHeight
+	x, y := band.x*ColWidth, band.y*RowHeight
+	xAttr, yAttr := fmt.Sprintf(` x="%s"`, c.xmlInt(x)), fmt.Sprintf(` y="%s"`, c.xmlInt(y))
+	if c.config.Minify && x == 0 {
+		xAttr = ""
+	}
+	if c.config.Minify && y == 0 {
+		yAttr = ""
+	}
+	fmt.Fprintf(c.w, `<svg%s%s width="%s" height="%s" overflow="hidden">`,
+		xAttr, yAttr, c.xmlInt(width), c.xmlInt(height))
+	if len(band.keyframes) <= 1 {
+		if len(band.rows) > 0 {
+			c.writeFrameRows(band.rows[len(band.rows)-1])
+		}
+		fmt.Fprint(c.w, `</svg>`)
+		return
+	}
+	if c.options.FrameSwitch == FrameSwitchHref {
+		c.writeHrefSequence(band.keyframes, band.stateIDs)
+		fmt.Fprint(c.w, `</svg>`)
+		return
+	}
+	if c.options.Animation == AnimationSMIL {
+		fmt.Fprint(c.w, `<g>`)
+		c.writeSMILTranslate(c.w, band.keyframes, width)
+	} else {
+		fmt.Fprintf(c.w, `<g style="animation:%s %s %s step-end">`,
+			band.name, animationDuration(c.plan.duration), c.loopCount())
+	}
+	c.writeStateStrip(band.rows, width)
+	fmt.Fprint(c.w, `</g></svg>`)
 }
 
 func (c *canvas) writeHrefSequence(frames []keyframePoint[int], ids []string) {
@@ -738,7 +778,11 @@ func (c *canvas) writeHrefSequence(frames []keyframePoint[int], ids []string) {
 
 func (c *canvas) writeStateStrip(states [][]*renderedRow, width int) {
 	for i, rows := range states {
-		fmt.Fprintf(c.w, `<g transform="translate(%d)">`, width*i)
+		if c.config.Minify && !renderedRowsHaveOutput(rows) {
+			fmt.Fprintf(c.w, `<g transform="translate(%s)"/>`, c.xmlInt(width*i))
+			continue
+		}
+		fmt.Fprintf(c.w, `<g transform="translate(%s)">`, c.xmlInt(width*i))
 		c.writeFrameRows(rows)
 		fmt.Fprint(c.w, `</g>`)
 	}
@@ -764,16 +808,25 @@ func (c *canvas) writeFrameRows(rows []*renderedRow) {
 	}
 }
 
+func renderedRowsHaveOutput(rows []*renderedRow) bool {
+	for _, row := range rows {
+		if row.id != "" || row.svg != "" {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *canvas) writeRow(w io.Writer, row ir.Row) {
 	for _, span := range c.backgroundSpans(row) {
 		x := span.startCol * ColWidth
 		xAttr := ""
 		if x != 0 {
-			xAttr = fmt.Sprintf(` x="%d"`, x)
+			xAttr = fmt.Sprintf(` x="%s"`, c.xmlInt(x))
 		}
-		fmt.Fprintf(w, `<rect class="%s"%s y="%d" width="%d" height="%d"/>`,
-			c.classNames[span.colorID], xAttr, row.Y*RowHeight,
-			(span.endCol-span.startCol)*ColWidth, RowHeight)
+		fmt.Fprintf(w, `<rect class="%s"%s y="%s" width="%s" height="%s"/>`,
+			c.classNames[span.colorID], xAttr, c.xmlInt(row.Y*RowHeight),
+			c.xmlInt((span.endCol-span.startCol)*ColWidth), c.xmlInt(RowHeight))
 	}
 	for _, run := range row.Runs {
 		c.writeTextRun(w, run, row.Y)
@@ -835,12 +888,12 @@ func (c *canvas) writeCursor() {
 	if len(frames) > 1 && c.options.Animation == AnimationCSS {
 		style = fmt.Sprintf(` style="animation:cursor %s %s step-end"`, animationDuration(c.plan.duration), c.loopCount())
 	}
-	fmt.Fprintf(c.w, `<g transform="translate(%d,%d)" visibility="%s"%s>`,
-		point.state.Col*ColWidth, point.state.Row*RowHeight, cursorVisibility(point.state), style)
+	fmt.Fprintf(c.w, `<g transform="translate(%s,%s)" visibility="%s"%s>`,
+		c.xmlInt(point.state.Col*ColWidth), c.xmlInt(point.state.Row*RowHeight), cursorVisibility(point.state), style)
 	if len(frames) > 1 && c.options.Animation == AnimationSMIL {
 		c.writeSMILCursor(c.w, frames)
 	}
-	fmt.Fprintf(c.w, `<rect class="cursor" width="%d" height="%d"/></g>`, ColWidth, RowHeight)
+	fmt.Fprintf(c.w, `<rect class="cursor" width="%s" height="%s"/></g>`, c.xmlInt(ColWidth), c.xmlInt(RowHeight))
 }
 
 func (c *canvas) writeTextRun(w io.Writer, run ir.TextRun, rowY int) {
@@ -879,12 +932,32 @@ func (c *canvas) writeTextRun(w io.Writer, run ir.TextRun, rowY int) {
 	// Build attributes
 	xAttr := ""
 	if x != 0 {
-		xAttr = fmt.Sprintf(` x="%d"`, x)
+		xAttr = fmt.Sprintf(` x="%s"`, c.xmlInt(x))
 	}
 	classAttr := ""
 	if len(classes) > 0 {
 		classAttr = fmt.Sprintf(" class=%q", strings.Join(classes, " "))
 	}
 
-	fmt.Fprintf(w, `<text%s y="%d"%s>%s</text>`, xAttr, y, classAttr, svgTextEscaper.Replace(text))
+	fmt.Fprintf(w, `<text%s y="%s"%s>%s</text>`, xAttr, c.xmlInt(y), classAttr, svgTextEscaper.Replace(text))
+}
+
+func (c *canvas) xmlInt(value int) string {
+	plain := strconv.Itoa(value)
+	if !c.config.Minify || value == 0 {
+		return plain
+	}
+	sign, digits := "", plain
+	if digits[0] == '-' {
+		sign, digits = "-", digits[1:]
+	}
+	zeros := len(digits) - len(strings.TrimRight(digits, "0"))
+	if zeros == 0 {
+		return plain
+	}
+	scientific := sign + strings.TrimRight(digits, "0") + "e" + strconv.Itoa(zeros)
+	if len(scientific) < len(plain) {
+		return scientific
+	}
+	return plain
 }

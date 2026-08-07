@@ -17,6 +17,7 @@ type preparedContent struct {
 	frameStateIDs  []string
 	bands          []preparedBand
 	rowDefs        []*renderedRow
+	cost           preparedContentCost
 }
 
 type preparedBand struct {
@@ -50,6 +51,7 @@ func (c *canvas) prepareContentContext(ctx context.Context) (preparedContent, er
 	if c.options.FrameSwitch == FrameSwitchHref && len(keyframes) > 1 {
 		prepared.frameStateIDs = stateIDs("_f", len(frames))
 	}
+	prepared.cost = buildPreparedContentCost(c, &prepared)
 	return prepared, contextErr(ctx)
 }
 
@@ -186,6 +188,7 @@ func (c *canvas) prepareLocalViewports(ctx context.Context, bands []rowBand) (pr
 		}
 		prepared.bands[i].name = name
 	}
+	prepared.cost = buildPreparedContentCost(c, &prepared)
 	return prepared, contextErr(ctx)
 }
 

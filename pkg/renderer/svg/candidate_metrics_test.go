@@ -213,6 +213,15 @@ func TestPreparedMetricsMatchSerializedStructure(t *testing.T) {
 			got.LocalViewportCount = 0
 			got.MaxViewportWidth = 0
 			got.MaxViewportHeight = 0
+			got.SourceActiveNodes = 0
+			got.SourceDefinitionNodes = 0
+			got.StaticUseShadowNodes = 0
+			got.InitialAnimatedUseShadowNodes = 0
+			got.PeakAnimatedUseShadowNodes = 0
+			got.PeakInstantiatedNodes = 0
+			got.DurationWeightedInstantiatedNodeNanos = 0
+			got.UseTargetSwitches = 0
+			got.PeakLiveNodeEstimate = 0
 			parsed.FinalBytes = 0
 			if !reflect.DeepEqual(got, parsed) {
 				t.Fatalf("prepared metrics = %#v; serialized = %#v", got, parsed)
