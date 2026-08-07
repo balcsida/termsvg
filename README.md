@@ -120,12 +120,13 @@ Available options:
 
 - `-o, --output=<file>` - Output svg to be created. Defaults to [input].svg
 - `-m, --minify` - Minify svg using [Minify](https://github.com/tdewolff/minify)
-- `--svg-layout=frames|bands|auto` - Select the compatibility frame strip, experimental local row bands, or opt-in size-based auto selection
+- `--svg-layout=frames|bands|regions|auto` - Select the compatibility frame strip, experimental local layouts, or opt-in auto selection
+- `--svg-auto-objective=size|runtime` - Compare auto candidates by exact bytes (default) or deterministic structural runtime proxies
 - `--svg-animation=css|smil` - Select CSS keyframes or the experimental discrete SMIL backend
 - `--svg-frame-switch=translate|href` - Select translated strips or experimental SMIL `href` switching
 - `--svg-max-fps=<fps>` - Opt into lossy SVG timeline sampling; `0` preserves every state
 
-The SVG defaults remain `frames`, `css`, and `0`, so existing exports keep their
+The SVG defaults remain `frames`, `css`, `translate`, `0`, and `size`, so existing exports keep their
 lossless compatibility path. SVG-specific non-default options are rejected for
 GIF and WebM exports.
 

@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"slices"
 	"strconv"
 	"strings"
@@ -190,17 +191,64 @@ func (r *Renderer) prepareSelectedCandidate(
 	if err := r.measureCandidate(ctx, rec, regions); err != nil {
 		return nil, err
 	}
-	return selectPreparedCandidate(frames, bands, regions), nil
+	selected := selectPreparedCandidate(r.options.AutoObjective, frames, bands, regions)
+	r.logAutoCandidates(selected, frames, bands, regions)
+	return selected, nil
 }
 
-func selectPreparedCandidate(candidates ...*preparedCandidate) *preparedCandidate {
+func selectPreparedCandidate(objective AutoObjective, candidates ...*preparedCandidate) *preparedCandidate {
 	selected := candidates[0]
 	for _, candidate := range candidates[1:] {
-		if candidate.metrics.FinalBytes < selected.metrics.FinalBytes {
+		if objective == AutoObjectiveRuntime && runtimeCandidateLess(&candidate.metrics, &selected.metrics) ||
+			objective != AutoObjectiveRuntime && candidate.metrics.FinalBytes < selected.metrics.FinalBytes {
 			selected = candidate
 		}
 	}
 	return selected
+}
+
+func runtimeCandidateLess(left, right *CandidateMetrics) bool {
+	leftViewportArea := int64(left.MaxViewportWidth) * int64(left.MaxViewportHeight)
+	rightViewportArea := int64(right.MaxViewportWidth) * int64(right.MaxViewportHeight)
+	comparisons := [...]struct{ left, right uint64 }{
+		{left.PeakLiveNodeEstimate, right.PeakLiveNodeEstimate},
+		{left.DurationWeightedInstantiatedNodeNanos, right.DurationWeightedInstantiatedNodeNanos},
+		{left.UseTargetSwitches, right.UseTargetSwitches},
+	}
+	for _, comparison := range comparisons {
+		if comparison.left != comparison.right {
+			return comparison.left < comparison.right
+		}
+	}
+	integerComparisons := [...]struct{ left, right int64 }{
+		{int64(left.AnimationNodes), int64(right.AnimationNodes)},
+		{int64(left.AnimatedElements), int64(right.AnimatedElements)},
+		{int64(left.LocalViewportCount), int64(right.LocalViewportCount)},
+		{leftViewportArea, rightViewportArea},
+		{left.MaxTranslatedArea, right.MaxTranslatedArea},
+		{left.FinalBytes, right.FinalBytes},
+	}
+	for _, comparison := range integerComparisons {
+		if comparison.left != comparison.right {
+			return comparison.left < comparison.right
+		}
+	}
+	return false
+}
+
+func (r *Renderer) logAutoCandidates(selected *preparedCandidate, candidates ...*preparedCandidate) {
+	if !r.config.Debug {
+		return
+	}
+	for _, candidate := range candidates {
+		metrics := candidate.metrics
+		log.Printf("[SVG] auto candidate layout=%s bytes=%d source_nodes=%d definition_nodes=%d "+
+			"peak_instantiated_nodes=%d animation_nodes=%d viewport_count=%d translated_area=%d "+
+			"objective=%s selected=%s",
+			candidate.options.Layout, metrics.FinalBytes, metrics.SourceActiveNodes, metrics.SourceDefinitionNodes,
+			metrics.PeakInstantiatedNodes, metrics.AnimationNodes, metrics.LocalViewportCount, metrics.MaxTranslatedArea,
+			r.options.AutoObjective, selected.options.Layout)
+	}
 }
 
 func prepareCandidate(

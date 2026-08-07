@@ -1,3 +1,4 @@
+//nolint:lll // Compact comparator cases show each complete metric change.
 package svg
 
 import (
@@ -5,8 +6,10 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log"
 	"reflect"
 	"slices"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -83,13 +86,116 @@ func TestSelectPreparedCandidateKeepsFramesOnTie(t *testing.T) {
 	frames := preparedCandidate{options: Options{Layout: LayoutFrames}, metrics: CandidateMetrics{FinalBytes: 10}}
 	bands := preparedCandidate{options: Options{Layout: LayoutBands}, metrics: CandidateMetrics{FinalBytes: 10}}
 	regions := preparedCandidate{options: Options{Layout: LayoutRegions}, metrics: CandidateMetrics{FinalBytes: 10}}
-	if got := selectPreparedCandidate(&frames, &bands, &regions); got != &frames {
+	if got := selectPreparedCandidate(AutoObjectiveSize, &frames, &bands, &regions); got != &frames {
 		t.Fatalf("tie selected %q; want frames", got.options.Layout)
 	}
 	bands.metrics.FinalBytes = 9
 	regions.metrics.FinalBytes = 9
-	if got := selectPreparedCandidate(&frames, &bands, &regions); got != &bands {
+	if got := selectPreparedCandidate(AutoObjectiveSize, &frames, &bands, &regions); got != &bands {
 		t.Fatalf("band/region tie selected %q; want bands", got.options.Layout)
+	}
+}
+
+func TestRuntimeCandidateComparator(t *testing.T) {
+	base := CandidateMetrics{
+		PeakLiveNodeEstimate: 10, DurationWeightedInstantiatedNodeNanos: 20,
+		UseTargetSwitches: 3, AnimationNodes: 4, AnimatedElements: 5,
+		LocalViewportCount: 6, MaxViewportWidth: 7, MaxViewportHeight: 8,
+		MaxTranslatedArea: 9, FinalBytes: 100,
+	}
+	tests := []struct {
+		name        string
+		left, right CandidateMetrics
+		want        bool
+	}{
+		{name: "href expansion", left: metricWith(&base, func(m *CandidateMetrics) {
+			m.FinalBytes--
+			m.PeakLiveNodeEstimate++
+		}), right: base, want: false},
+		{name: "instantiated duration", left: metricWith(&base, func(m *CandidateMetrics) {
+			m.DurationWeightedInstantiatedNodeNanos--
+		}), right: base, want: true},
+		{name: "target switches", left: metricWith(&base, func(m *CandidateMetrics) { m.UseTargetSwitches-- }), right: base, want: true},
+		{name: "animation nodes", left: metricWith(&base, func(m *CandidateMetrics) { m.AnimationNodes-- }), right: base, want: true},
+		{name: "animated elements", left: metricWith(&base, func(m *CandidateMetrics) { m.AnimatedElements-- }), right: base, want: true},
+		{name: "viewport count", left: metricWith(&base, func(m *CandidateMetrics) { m.LocalViewportCount-- }), right: base, want: true},
+		{name: "viewport area", left: metricWith(&base, func(m *CandidateMetrics) { m.MaxViewportWidth-- }), right: base, want: true},
+		{name: "translated area", left: metricWith(&base, func(m *CandidateMetrics) { m.MaxTranslatedArea-- }), right: base, want: true},
+		{name: "bytes", left: metricWith(&base, func(m *CandidateMetrics) { m.FinalBytes-- }), right: base, want: true},
+		{name: "fewer nodes beats far more animations", left: metricWith(&base, func(m *CandidateMetrics) {
+			m.PeakLiveNodeEstimate--
+			m.AnimationNodes = 1000
+		}), right: base, want: true},
+		{name: "complete tie", left: base, right: base, want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := runtimeCandidateLess(&test.left, &test.right); got != test.want {
+				t.Fatalf("runtimeCandidateLess() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
+func metricWith(metric *CandidateMetrics, change func(*CandidateMetrics)) CandidateMetrics {
+	changed := *metric
+	change(&changed)
+	return changed
+}
+
+func TestRuntimeSelectionKeepsStableOrderOnCompleteTie(t *testing.T) {
+	metrics := CandidateMetrics{PeakLiveNodeEstimate: 1, FinalBytes: 1}
+	frames := preparedCandidate{options: Options{Layout: LayoutFrames}, metrics: metrics}
+	bands := preparedCandidate{options: Options{Layout: LayoutBands}, metrics: metrics}
+	regions := preparedCandidate{options: Options{Layout: LayoutRegions}, metrics: metrics}
+	if got := selectPreparedCandidate(AutoObjectiveRuntime, &frames, &bands, &regions); got != &frames {
+		t.Fatalf("runtime tie selected %q; want frames", got.options.Layout)
+	}
+}
+
+func TestRuntimeSelectionRejectsSyntheticHrefExpansion(t *testing.T) {
+	href := preparedCandidate{options: Options{Layout: LayoutFrames}, metrics: CandidateMetrics{
+		FinalBytes: 99, SourceActiveNodes: 5, SourceDefinitionNodes: 500,
+		PeakInstantiatedNodes: 1000, PeakLiveNodeEstimate: 100,
+		DurationWeightedInstantiatedNodeNanos: 10_000,
+	}}
+	translate := preparedCandidate{options: Options{Layout: LayoutBands}, metrics: CandidateMetrics{
+		FinalBytes: 100, SourceActiveNodes: 20, SourceDefinitionNodes: 5,
+		PeakInstantiatedNodes: 50, PeakLiveNodeEstimate: 10,
+		DurationWeightedInstantiatedNodeNanos: 100,
+	}}
+	if got := selectPreparedCandidate(AutoObjectiveSize, &href, &translate); got != &href {
+		t.Fatalf("size selected %q; want smaller href fixture", got.options.Layout)
+	}
+	if got := selectPreparedCandidate(AutoObjectiveRuntime, &href, &translate); got != &translate {
+		t.Fatalf("runtime selected %q; want lower-expansion translate fixture", got.options.Layout)
+	}
+}
+
+func TestAutoDebugLogsCandidateTableAndSelection(t *testing.T) {
+	config := renderer.DefaultConfig()
+	config.Debug = true
+	r := New(config, WithLayout(LayoutAuto), WithAutoObjective(AutoObjectiveRuntime))
+	candidate := &preparedCandidate{options: Options{Layout: LayoutFrames}, metrics: CandidateMetrics{
+		FinalBytes: 10, SourceActiveNodes: 11, SourceDefinitionNodes: 12,
+		PeakInstantiatedNodes: 13, PeakLiveNodeEstimate: 99, AnimationNodes: 14, LocalViewportCount: 15,
+		MaxTranslatedArea: 16,
+	}}
+	var output bytes.Buffer
+	oldWriter, oldFlags := log.Writer(), log.Flags()
+	log.SetOutput(&output)
+	log.SetFlags(0)
+	t.Cleanup(func() { log.SetOutput(oldWriter); log.SetFlags(oldFlags) })
+
+	r.logAutoCandidates(candidate, candidate)
+	for _, want := range []string{
+		"layout=frames", "bytes=10", "source_nodes=11", "definition_nodes=12",
+		"peak_instantiated_nodes=13", "animation_nodes=14", "viewport_count=15",
+		"translated_area=16", "objective=runtime", "selected=frames",
+	} {
+		if !strings.Contains(output.String(), want) {
+			t.Fatalf("debug output %q does not contain %q", output.String(), want)
+		}
 	}
 }
 
@@ -143,6 +249,36 @@ func TestAutoSerializesSmallestPreparedCandidate(t *testing.T) {
 	}
 	if !bytes.Equal(got.Bytes(), outputs[want]) {
 		t.Fatalf("auto output differs from selected %s candidate", want)
+	}
+	var explicitSize bytes.Buffer
+	if err := New(config, WithLayout(LayoutAuto), WithAutoObjective(AutoObjectiveSize)).Render(context.Background(), rec, &explicitSize); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got.Bytes(), explicitSize.Bytes()) {
+		t.Fatal("explicit size objective changed default auto output")
+	}
+}
+
+func TestRuntimeSelectionIsDeterministicForFiniteAndInfiniteLoops(t *testing.T) {
+	for _, loops := range []int{0, 3} {
+		config := renderer.DefaultConfig()
+		config.LoopCount = loops
+		r := New(config, WithLayout(LayoutAuto), WithAutoObjective(AutoObjectiveRuntime))
+		var selected LayoutMode
+		for range 3 {
+			plan, err := r.buildSemanticPlan(context.Background(), experimentalRecording())
+			if err != nil {
+				t.Fatal(err)
+			}
+			candidate, err := r.prepareSelectedCandidate(context.Background(), experimentalRecording(), &plan)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if selected != "" && candidate.options.Layout != selected {
+				t.Fatalf("loop count %d selected %q after %q", loops, candidate.options.Layout, selected)
+			}
+			selected = candidate.options.Layout
+		}
 	}
 }
 

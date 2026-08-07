@@ -1,3 +1,4 @@
+//nolint:lll // Compact option table rows are easier to compare.
 package export
 
 import (
@@ -17,19 +18,24 @@ func TestNormalizedSVGOptions(t *testing.T) {
 		{name: "zero value defaults", cmd: Cmd{}, format: "svg", want: svg.DefaultOptions()},
 		{
 			name: "regions layout", cmd: Cmd{SVGLayout: "REGIONS"}, format: "svg",
-			want: svg.Options{Layout: svg.LayoutRegions, Animation: svg.AnimationCSS, FrameSwitch: svg.FrameSwitchTranslate},
+			want: svg.Options{Layout: svg.LayoutRegions, Animation: svg.AnimationCSS, FrameSwitch: svg.FrameSwitchTranslate, AutoObjective: svg.AutoObjectiveSize},
 		},
 		{
 			name:   "experimental options",
 			cmd:    Cmd{SVGLayout: "BANDS", SVGAnimation: "SMIL", SVGMaxFPS: 30},
 			format: "svg",
 			want: svg.Options{
-				Layout:      svg.LayoutBands,
-				Animation:   svg.AnimationSMIL,
-				FrameSwitch: svg.FrameSwitchTranslate,
-				MaxFPS:      30,
+				Layout:        svg.LayoutBands,
+				Animation:     svg.AnimationSMIL,
+				FrameSwitch:   svg.FrameSwitchTranslate,
+				MaxFPS:        30,
+				AutoObjective: svg.AutoObjectiveSize,
 			},
 		},
+		{name: "runtime objective", cmd: Cmd{SVGLayout: "AUTO", SVGAutoObjective: "RUNTIME"}, format: "svg", want: svg.Options{Layout: svg.LayoutAuto, Animation: svg.AnimationCSS, FrameSwitch: svg.FrameSwitchTranslate, AutoObjective: svg.AutoObjectiveRuntime}},
+		{name: "runtime requires auto", cmd: Cmd{SVGAutoObjective: "runtime"}, format: "svg", wantErr: true},
+		{name: "invalid objective", cmd: Cmd{SVGLayout: "auto", SVGAutoObjective: "balanced"}, format: "svg", wantErr: true},
+		{name: "non SVG rejects runtime", cmd: Cmd{SVGLayout: "auto", SVGAutoObjective: "runtime"}, format: "gif", wantErr: true},
 		{name: "negative FPS", cmd: Cmd{SVGMaxFPS: -1}, format: "svg", wantErr: true},
 		{name: "non SVG rejects non-default", cmd: Cmd{SVGLayout: "bands"}, format: "gif", wantErr: true},
 		{

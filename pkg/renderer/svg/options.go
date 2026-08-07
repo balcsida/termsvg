@@ -14,11 +14,15 @@ type AnimationMode string
 // FrameSwitchMode selects how discrete content states are activated.
 type FrameSwitchMode string
 
+// AutoObjective selects how auto layout candidates are compared.
+type AutoObjective string
+
 // Options contains SVG-specific renderer settings.
 type Options struct {
-	Layout      LayoutMode
-	Animation   AnimationMode
-	FrameSwitch FrameSwitchMode
+	Layout        LayoutMode
+	Animation     AnimationMode
+	FrameSwitch   FrameSwitchMode
+	AutoObjective AutoObjective
 	// MaxFPS limits SVG timeline samples. Zero preserves every source state.
 	MaxFPS int
 }
@@ -48,6 +52,9 @@ const (
 	FrameSwitchTranslate FrameSwitchMode = "translate"
 	// FrameSwitchHref animates one use element between state definitions.
 	FrameSwitchHref FrameSwitchMode = "href"
+
+	AutoObjectiveSize    AutoObjective = "size"
+	AutoObjectiveRuntime AutoObjective = "runtime"
 )
 
 func (o Options) usesLocalViewports() bool {
@@ -57,9 +64,10 @@ func (o Options) usesLocalViewports() bool {
 // DefaultOptions returns the compatibility-preserving SVG defaults.
 func DefaultOptions() Options {
 	return Options{
-		Layout:      LayoutFrames,
-		Animation:   AnimationCSS,
-		FrameSwitch: FrameSwitchTranslate,
+		Layout:        LayoutFrames,
+		Animation:     AnimationCSS,
+		FrameSwitch:   FrameSwitchTranslate,
+		AutoObjective: AutoObjectiveSize,
 	}
 }
 
@@ -83,6 +91,11 @@ func WithMaxFPS(maxFPS int) Option {
 	return func(options *Options) { options.MaxFPS = maxFPS }
 }
 
+// WithAutoObjective selects size or structural runtime proxy comparison for auto layout.
+func WithAutoObjective(objective AutoObjective) Option {
+	return func(options *Options) { options.AutoObjective = objective }
+}
+
 func (o Options) normalized() Options {
 	if o.Layout == "" {
 		o.Layout = LayoutFrames
@@ -93,11 +106,15 @@ func (o Options) normalized() Options {
 	if o.FrameSwitch == "" {
 		o.FrameSwitch = FrameSwitchTranslate
 	}
+	if o.AutoObjective == "" {
+		o.AutoObjective = AutoObjectiveSize
+	}
 	return o
 }
 
 // Validate checks SVG-specific options.
 func (o Options) Validate() error {
+	o = o.normalized()
 	switch o.Layout {
 	case LayoutFrames, LayoutBands, LayoutRegions, LayoutAuto:
 	default:
@@ -112,6 +129,14 @@ func (o Options) Validate() error {
 	case FrameSwitchTranslate, FrameSwitchHref:
 	default:
 		return fmt.Errorf("unsupported SVG frame switch mode %q", o.FrameSwitch)
+	}
+	switch o.AutoObjective {
+	case AutoObjectiveSize, AutoObjectiveRuntime:
+	default:
+		return fmt.Errorf("unsupported SVG auto objective %q", o.AutoObjective)
+	}
+	if o.AutoObjective != AutoObjectiveSize && o.Layout != LayoutAuto {
+		return fmt.Errorf("SVG auto objective %q requires auto layout", o.AutoObjective)
 	}
 	if o.FrameSwitch == FrameSwitchHref && o.Animation != AnimationSMIL {
 		return fmt.Errorf("SVG href frame switching requires SMIL animation")
