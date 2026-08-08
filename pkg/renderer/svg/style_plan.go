@@ -113,6 +113,9 @@ func (c *canvas) countPaintOccurrences(content *preparedContent) paintOccurrence
 	visitRows(content.frameRows)
 	for i := range content.bands {
 		visitRows(content.bands[i].rows)
+		if track := content.bands[i].track; track != nil && len(track.fill) > 0 {
+			counts.backgrounds[track.fill[0].state]++
+		}
 	}
 	if c.plan.cursorEverVisible {
 		counts.cursor = 1

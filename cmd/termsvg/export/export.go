@@ -41,6 +41,7 @@ type Cmd struct {
 	SVGFrameSwitch   string        `default:"translate" enum:"translate,href" help:"SVG state switching: translated strips or experimental animated hrefs"`
 	SVGAutoObjective string        `default:"size" enum:"size,runtime" help:"SVG auto layout objective: size or structural runtime proxies"`
 	SVGStyle         string        `default:"legacy" enum:"legacy,auto" help:"SVG paint encoding: compatibility legacy or measured auto selection"`
+	SVGPrimitives    string        `default:"snapshots" enum:"snapshots,rect-tracks" help:"SVG primitives: snapshots or experimental retained background rectangles"`
 	SVGMaxFPS        int           `default:"0" help:"Maximum SVG timeline FPS; 0 preserves every state"`
 }
 
@@ -60,6 +61,9 @@ func (cmd *Cmd) normalizedSVGOptions(format string) (svg.Options, error) {
 	}
 	if cmd.SVGStyle != "" {
 		options.Style = svg.StyleMode(strings.ToLower(cmd.SVGStyle))
+	}
+	if cmd.SVGPrimitives != "" {
+		options.Primitives = svg.PrimitiveMode(strings.ToLower(cmd.SVGPrimitives))
 	}
 	options.MaxFPS = cmd.SVGMaxFPS
 	if err := options.Validate(); err != nil {
@@ -211,6 +215,7 @@ func (cmd *Cmd) Run() error {
 			svg.WithMaxFPS(svgOptions.MaxFPS),
 			svg.WithAutoObjective(svgOptions.AutoObjective),
 			svg.WithStyleMode(svgOptions.Style),
+			svg.WithPrimitiveMode(svgOptions.Primitives),
 		)
 	case "webm":
 		webmRenderer, err := webm.New(renderConfig)

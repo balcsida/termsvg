@@ -20,6 +20,9 @@ type AutoObjective string
 // StyleMode selects the SVG paint encoding.
 type StyleMode string
 
+// PrimitiveMode selects snapshot or retained SVG primitive emission.
+type PrimitiveMode string
+
 // Options contains SVG-specific renderer settings.
 type Options struct {
 	Layout        LayoutMode
@@ -27,6 +30,7 @@ type Options struct {
 	FrameSwitch   FrameSwitchMode
 	AutoObjective AutoObjective
 	Style         StyleMode
+	Primitives    PrimitiveMode
 	// MaxFPS limits SVG timeline samples. Zero preserves every source state.
 	MaxFPS int
 }
@@ -65,6 +69,9 @@ const (
 
 	StyleLegacy StyleMode = "legacy"
 	StyleAuto   StyleMode = "auto"
+
+	PrimitiveSnapshots  PrimitiveMode = "snapshots"
+	PrimitiveRectTracks PrimitiveMode = "rect-tracks"
 )
 
 func (o Options) usesLocalViewports() bool {
@@ -79,6 +86,7 @@ func DefaultOptions() Options {
 		FrameSwitch:   FrameSwitchTranslate,
 		AutoObjective: AutoObjectiveSize,
 		Style:         StyleLegacy,
+		Primitives:    PrimitiveSnapshots,
 	}
 }
 
@@ -112,6 +120,11 @@ func WithStyleMode(style StyleMode) Option {
 	return func(options *Options) { options.Style = style }
 }
 
+// WithPrimitiveMode selects snapshot or retained rectangle emission.
+func WithPrimitiveMode(primitives PrimitiveMode) Option {
+	return func(options *Options) { options.Primitives = primitives }
+}
+
 func (o Options) normalized() Options {
 	if o.Layout == "" {
 		o.Layout = LayoutFrames
@@ -127,6 +140,9 @@ func (o Options) normalized() Options {
 	}
 	if o.Style == "" {
 		o.Style = StyleLegacy
+	}
+	if o.Primitives == "" {
+		o.Primitives = PrimitiveSnapshots
 	}
 	return o
 }
@@ -158,6 +174,17 @@ func (o Options) Validate() error {
 	case StyleLegacy, StyleAuto:
 	default:
 		return fmt.Errorf("unsupported SVG style mode %q", o.Style)
+	}
+	switch o.Primitives {
+	case PrimitiveSnapshots, PrimitiveRectTracks:
+	default:
+		return fmt.Errorf("unsupported SVG primitive mode %q", o.Primitives)
+	}
+	if o.Primitives == PrimitiveRectTracks && o.Animation != AnimationSMIL {
+		return fmt.Errorf("SVG rectangle tracks require SMIL animation")
+	}
+	if o.Primitives == PrimitiveRectTracks && o.Layout != LayoutRegions && o.Layout != LayoutScroll {
+		return fmt.Errorf("SVG rectangle tracks require regions or scroll layout")
 	}
 	if o.AutoObjective != AutoObjectiveSize && o.Layout != LayoutAuto {
 		return fmt.Errorf("SVG auto objective %q requires auto layout", o.AutoObjective)

@@ -10,12 +10,28 @@ import (
 
 func TestDefaultOptionsPreserveCompatibilityPath(t *testing.T) {
 	got := DefaultOptions()
-	want := Options{Layout: LayoutFrames, Animation: AnimationCSS, FrameSwitch: FrameSwitchTranslate, AutoObjective: AutoObjectiveSize, Style: StyleLegacy}
+	want := Options{Layout: LayoutFrames, Animation: AnimationCSS, FrameSwitch: FrameSwitchTranslate, AutoObjective: AutoObjectiveSize, Style: StyleLegacy, Primitives: PrimitiveSnapshots}
 	if got != want {
 		t.Fatalf("DefaultOptions() = %#v, want %#v", got, want)
 	}
 	if err := got.Validate(); err != nil {
 		t.Fatalf("default options are invalid: %v", err)
+	}
+}
+
+func TestRectTracksRequireSMILLocalLayout(t *testing.T) {
+	for _, options := range []Options{
+		{Layout: LayoutRegions, Animation: AnimationCSS, Primitives: PrimitiveRectTracks},
+		{Layout: LayoutFrames, Animation: AnimationSMIL, Primitives: PrimitiveRectTracks},
+		{Layout: LayoutAuto, Animation: AnimationSMIL, Primitives: PrimitiveRectTracks},
+	} {
+		if err := options.Validate(); err == nil {
+			t.Fatalf("Validate(%#v) succeeded", options)
+		}
+	}
+	options := Options{Layout: LayoutRegions, Animation: AnimationSMIL, Primitives: PrimitiveRectTracks}
+	if err := options.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
 	}
 }
 
@@ -73,7 +89,7 @@ func TestNewAcceptsFunctionalOptionsWithoutChangingExistingCallers(t *testing.T)
 	got := New(config, WithLayout(LayoutAuto), WithAnimation(AnimationSMIL), WithMaxFPS(30), WithAutoObjective(AutoObjectiveRuntime), WithStyleMode(StyleAuto))
 	want := Options{
 		Layout: LayoutAuto, Animation: AnimationSMIL, FrameSwitch: FrameSwitchTranslate, MaxFPS: 30,
-		AutoObjective: AutoObjectiveRuntime, Style: StyleAuto,
+		AutoObjective: AutoObjectiveRuntime, Style: StyleAuto, Primitives: PrimitiveSnapshots,
 	}
 	if got.options != want {
 		t.Fatalf("functional options = %#v, want %#v", got.options, want)

@@ -105,6 +105,21 @@ func BenchmarkScrollTape(b *testing.B) {
 	}
 }
 
+func BenchmarkRetainedBackgroundTracks(b *testing.B) {
+	rec := rectTrackRecording(b, func() []rectState {
+		states := make([]rectState, 64)
+		for i := 1; i < len(states)-1; i++ {
+			states[i] = rectState{x: i % 3, width: i%24 + 1}
+		}
+		return states
+	}(), false)
+	for _, primitives := range []PrimitiveMode{PrimitiveSnapshots, PrimitiveRectTracks} {
+		b.Run(string(primitives), func(b *testing.B) {
+			benchmarkScrollCandidate(b, rec, WithLayout(LayoutRegions), WithAnimation(AnimationSMIL), WithPrimitiveMode(primitives))
+		})
+	}
+}
+
 func benchmarkScrollCandidate(b *testing.B, rec *ir.Recording, options ...Option) {
 	b.Helper()
 	r := New(renderer.DefaultConfig(), options...)
@@ -126,6 +141,9 @@ func benchmarkScrollCandidate(b *testing.B, rec *ir.Recording, options ...Option
 	b.ReportMetric(float64(metrics.LocalViewportCount), "viewports")
 	b.ReportMetric(float64(metrics.MaxTapeArea), "tape-area")
 	b.ReportMetric(float64(metrics.MaxTranslatedArea), "translated-area")
+	b.ReportMetric(float64(metrics.RetainedPrimitiveCount), "retained-primitives")
+	b.ReportMetric(float64(metrics.GeometryAnimationNodes), "geometry-animations")
+	b.ReportMetric(float64(metrics.PaintPropertyAnimationNodes), "paint-animations")
 }
 
 func BenchmarkAutoSelection(b *testing.B) {

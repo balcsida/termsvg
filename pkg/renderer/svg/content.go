@@ -36,6 +36,7 @@ type preparedBand struct {
 	offsets    []keyframePoint[int]
 	direction  int
 	tapeHeight int
+	track      *retainedRectTrack
 }
 
 type preparedBandKind uint8
@@ -43,6 +44,7 @@ type preparedBandKind uint8
 const (
 	bandSnapshot preparedBandKind = iota
 	bandScrollTape
+	bandRetainedRect
 )
 
 func (c *canvas) prepareContentContext(ctx context.Context) (preparedContent, error) {
@@ -73,11 +75,29 @@ func (c *canvas) prepareContentContext(ctx context.Context) (preparedContent, er
 
 func (c *canvas) prepareRegions(ctx context.Context) (preparedContent, error) {
 	regions := buildDynamicRegions(&c.plan, c.rec.Colors)
-	regions, err := c.optimizeDynamicRegions(ctx, regions)
+	optimized, err := c.optimizeDynamicRegions(ctx, regions)
 	if err != nil {
 		return preparedContent{}, err
 	}
-	return c.prepareLocalViewports(ctx, c.regionBands(regions))
+	if c.options.Primitives != PrimitiveRectTracks {
+		return c.prepareLocalViewports(ctx, c.regionBands(optimized))
+	}
+	probe := *c
+	probe.options.Primitives = PrimitiveSnapshots
+	selected, err := probe.prepareLocalViewports(ctx, probe.regionBands(optimized))
+	if err != nil {
+		return preparedContent{}, err
+	}
+	for _, candidateRegions := range [][]dynamicRegion{optimized, regions} {
+		candidate, err := c.prepareLocalViewports(ctx, c.regionBands(candidateRegions))
+		if err != nil {
+			return preparedContent{}, err
+		}
+		if candidate.cost.regionBytes < selected.cost.regionBytes {
+			selected = candidate
+		}
+	}
+	return selected, nil
 }
 
 func (c *canvas) regionBands(regions []dynamicRegion) []rowBand {
@@ -160,6 +180,9 @@ func (c *canvas) prepareScroll(ctx context.Context) (preparedContent, error) {
 		return preparedContent{}, err
 	}
 	for i, source := range bands {
+		if prepared.bands[i].kind != bandSnapshot {
+			continue
+		}
 		tape, ok := detectUpwardScrollTape(source, c.rec.Colors)
 		if !ok {
 			continue
@@ -193,6 +216,10 @@ func scrollTapeWins(snapshot, tape preparedContentCost) bool {
 	return exactBandReplacementDelta(snapshot, tape) < 0
 }
 
+func retainedRectWins(snapshot, retained preparedContentCost) bool {
+	return exactBandReplacementDelta(snapshot, retained) < 0
+}
+
 func (c *canvas) prepareLocalViewports(ctx context.Context, bands []rowBand) (preparedContent, error) {
 	if err := contextErr(ctx); err != nil {
 		return preparedContent{}, err
@@ -211,7 +238,29 @@ func (c *canvas) prepareLocalViewports(ctx context.Context, bands []rowBand) (pr
 			content:   band.content,
 		}
 	}
-	return c.materializeBands(ctx, prepared.bands)
+	prepared, err := c.materializeBands(ctx, prepared.bands)
+	if err != nil || c.options.Primitives != PrimitiveRectTracks {
+		return prepared, err
+	}
+	for i, source := range bands {
+		track, stripped, ok := c.retainedRectCandidate(source)
+		if !ok {
+			continue
+		}
+		candidateBands := slices.Clone(prepared.bands)
+		candidateBands[i].kind = bandRetainedRect
+		candidateBands[i].track = &track
+		candidateBands[i].content = stripped
+		candidateBands[i].keyframes, _ = contentKeyframesFor(stripped)
+		candidate, err := c.materializeBands(ctx, candidateBands)
+		if err != nil {
+			return preparedContent{}, err
+		}
+		if retainedRectWins(prepared.cost, candidate.cost) {
+			prepared = candidate
+		}
+	}
+	return prepared, nil
 }
 
 func (c *canvas) materializeBands(ctx context.Context, bands []preparedBand) (preparedContent, error) {

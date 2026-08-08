@@ -944,16 +944,25 @@ func (c *canvas) writeBand(band *preparedBand) {
 		fmt.Fprint(c.w, `</g></svg>`)
 		return
 	}
+	if band.kind == bandRetainedRect {
+		c.writeRetainedRect(band.track)
+		c.writeSnapshotBandBody(band, width)
+		fmt.Fprint(c.w, `</svg>`)
+		return
+	}
+	c.writeSnapshotBandBody(band, width)
+	fmt.Fprint(c.w, `</svg>`)
+}
+
+func (c *canvas) writeSnapshotBandBody(band *preparedBand, width int) {
 	if len(band.keyframes) <= 1 {
 		if len(band.rows) > 0 {
 			c.writeFrameRows(band.rows[len(band.rows)-1])
 		}
-		fmt.Fprint(c.w, `</svg>`)
 		return
 	}
 	if c.options.FrameSwitch == FrameSwitchHref {
 		c.writeHrefSequence(band.keyframes, band.stateIDs)
-		fmt.Fprint(c.w, `</svg>`)
 		return
 	}
 	if c.options.Animation == AnimationSMIL {
@@ -964,7 +973,7 @@ func (c *canvas) writeBand(band *preparedBand) {
 			band.name, animationDuration(c.plan.duration), c.loopCount(), c.scrollFiniteAnimationFill())
 	}
 	c.writeStateStrip(band.rows, width)
-	fmt.Fprint(c.w, `</g></svg>`)
+	fmt.Fprint(c.w, `</g>`)
 }
 
 func (c *canvas) scrollFiniteAnimationFill() string {

@@ -37,6 +37,9 @@ type CandidateMetrics struct {
 	MaxTapeHeight                         int
 	MaxTapeArea                           int64
 	ScrollTransformAnimations             int
+	RetainedPrimitiveCount                int
+	GeometryAnimationNodes                int
+	PaintPropertyAnimationNodes           int
 	SourceActiveNodes                     int
 	SourceDefinitionNodes                 int
 	StaticUseShadowNodes                  uint64
@@ -69,6 +72,11 @@ func addPreparedMetrics(
 			metrics.MaxTapeArea = max(metrics.MaxTapeArea, int64(band.width*ColWidth)*int64(band.tapeHeight*RowHeight))
 			metrics.ScrollTransformAnimations++
 			continue
+		}
+		if band.kind == bandRetainedRect {
+			metrics.RetainedPrimitiveCount++
+			metrics.GeometryAnimationNodes += band.track.geometryAnimationCount()
+			metrics.PaintPropertyAnimationNodes += boolInt(band.track.fillChanges())
 		}
 		if options.FrameSwitch == FrameSwitchTranslate && len(band.keyframes) > 1 {
 			addTranslatedSurface(metrics, band.width*ColWidth, band.height*RowHeight, len(band.rows))
@@ -458,6 +466,14 @@ func addLocalViewportMetrics(metrics *CandidateMetrics, c *canvas, content *prep
 			addStateRowsMetrics(metrics, c, false, [][]*renderedRow{band.tapeRows})
 			animations++
 			continue
+		}
+		if band.kind == bandRetainedRect {
+			addMetric(metrics, false, "rect", 1)
+			animationCount := band.track.animationCount()
+			addMetric(metrics, false, "animation", animationCount)
+			if animationCount > 0 {
+				animations++
+			}
 		}
 		if len(band.keyframes) <= 1 {
 			addStateRowsMetrics(metrics, c, false, band.rows)

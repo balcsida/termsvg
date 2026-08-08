@@ -123,11 +123,12 @@ Available options:
 - `--svg-layout=frames|bands|regions|scroll|auto` - Select the compatibility frame strip, experimental local layouts, or opt-in auto selection (`scroll` uses strict upward tapes with lossless fallback)
 - `--svg-auto-objective=size|runtime` - Compare auto candidates by exact bytes (default) or deterministic structural runtime proxies
 - `--svg-style=legacy|auto` - Keep compatibility paint classes (default) or opt into exact, profitability-driven paint encoding
+- `--svg-primitives=snapshots|rect-tracks` - Keep snapshots (default) or retain strictly identified, byte-profitable background rectangles; tracks require SMIL with `regions` or `scroll`
 - `--svg-animation=css|smil` - Select CSS keyframes or the experimental discrete SMIL backend
 - `--svg-frame-switch=translate|href` - Select translated strips or experimental SMIL `href` switching
 - `--svg-max-fps=<fps>` - Opt into lossy SVG timeline sampling; `0` preserves every state
 
-The SVG defaults remain `frames`, `css`, `translate`, `0`, `size`, and `legacy`, so existing exports keep their
+The SVG defaults remain `frames`, `css`, `translate`, `0`, `size`, `legacy`, and `snapshots`, so existing exports keep their
 lossless compatibility path. SVG-specific non-default options are rejected for
 GIF and WebM exports.
 

@@ -174,11 +174,13 @@ func (c *canvas) optimizeDynamicRegionsWithBudget(
 ) ([]dynamicRegion, error) {
 	grids := visualGridsForPlan(&c.plan, c.rec.Colors)
 	measure := func(candidate []dynamicRegion) (int64, error) {
-		content, err := c.prepareLocalViewports(ctx, c.regionBands(candidate))
+		probe := *c
+		probe.options.Primitives = PrimitiveSnapshots
+		content, err := probe.prepareLocalViewports(ctx, probe.regionBands(candidate))
 		if err != nil {
 			return 0, err
 		}
-		return costPreparedContent(ctx, c, &content)
+		return costPreparedContent(ctx, &probe, &content)
 	}
 	if evaluationBudget > 0 && len(mergeableRegionPairs(regions)) > evaluationBudget {
 		spatial := spatialDynamicRegions(&c.plan, grids)
