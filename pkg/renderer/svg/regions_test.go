@@ -90,6 +90,45 @@ func TestBuildDynamicRegionsDoesNotBisectWideGlyphFootprint(t *testing.T) {
 	}
 }
 
+func TestOverBudgetSpatialSelectionKeepsVisualAtomsIndivisible(t *testing.T) {
+	rows := func(pattern string) []ir.Row {
+		out := []ir.Row{{Runs: []ir.TextRun{{Text: "X", EndCol: 1}}}}
+		for y := 2; y < 22; y++ {
+			out = append(out, ir.Row{Y: y, Runs: []ir.TextRun{{Text: pattern, EndCol: 20}}})
+		}
+		return out
+	}
+	initial := rows(strings.Repeat("0", 20))
+	initial[0].Runs[0] = ir.TextRun{Text: " ", EndCol: 2}
+	plan := renderPlan{duration: 3 * time.Second, width: 20, height: 22, content: timeline[[]ir.Row]{
+		duration: 3 * time.Second,
+		points: []timelinePoint[[]ir.Row]{
+			{state: initial},
+			{time: time.Second, state: rows("10101010101010101010")},
+			{time: 2 * time.Second, state: rows(strings.Repeat("1", 20))},
+		},
+	}}
+	rec := parityRecording(plan.width, plan.height, nil)
+	c := canvas{
+		rec: rec, plan: plan, config: *renderer.DefaultConfig(),
+		options: Options{Layout: LayoutRegions}, classNames: rec.Colors.GenerateClassNames(), metrics: &CandidateMetrics{},
+	}
+	temporal := buildDynamicRegions(&plan, rec.Colors)
+	if pairs := len(mergeableRegionPairs(temporal)); pairs <= regionCandidateEvaluationBudget {
+		t.Fatalf("temporal merge pairs = %d; want over budget %d", pairs, regionCandidateEvaluationBudget)
+	}
+
+	optimized, err := c.optimizeDynamicRegions(context.Background(), temporal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(optimized, func(region dynamicRegion) bool {
+		return region.x == 0 && region.y == 0 && region.width == 2 && region.height == 1
+	}) {
+		t.Fatalf("optimized regions bisect the two-cell visual atom: %#v", regionBounds(optimized))
+	}
+}
+
 func TestOptimizeDynamicRegionsUsesExactBackendProfitability(t *testing.T) {
 	plan := renderPlan{duration: time.Second, width: 8, height: 2, content: timeline[[]ir.Row]{
 		duration: time.Second,

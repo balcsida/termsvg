@@ -210,29 +210,33 @@ func spatialDynamicRegions(plan *renderPlan, grids []visualGrid) []dynamicRegion
 			regions = append(regions, dynamicRegionsForRow(plan, grids, y)...)
 			continue
 		}
-		dynamic := make([]bool, plan.width)
-		for col := range plan.width {
-			for state := 1; state < len(grids); state++ {
-				if !visualCellsEqual(&grids[0].rows[y], col, &grids[state].rows[y], col) {
-					dynamic[col] = true
-					break
+		atoms := visualAtoms(grids, y, plan.width)
+		dynamic := make([]bool, len(atoms))
+		for index, atom := range atoms {
+			for col := atom[0]; col < atom[1] && !dynamic[index]; col++ {
+				for state := 1; state < len(grids); state++ {
+					if !visualCellsEqual(&grids[0].rows[y], col, &grids[state].rows[y], col) {
+						dynamic[index] = true
+						break
+					}
 				}
 			}
 		}
-		for start := 0; start < len(dynamic); {
-			if !dynamic[start] {
-				start++
+		for index := 0; index < len(dynamic); {
+			if !dynamic[index] {
+				index++
 				continue
 			}
-			end := start + 1
-			for end < len(dynamic) && dynamic[end] {
-				end++
+			start, end := atoms[index][0], atoms[index][1]
+			index++
+			for index < len(dynamic) && dynamic[index] {
+				end = atoms[index][1]
+				index++
 			}
 			candidate := cropRegionFromGrids(plan, grids, start, y, end-start, 1)
 			if len(candidate.content.points) > 1 {
 				regions = append(regions, candidate)
 			}
-			start = end
 		}
 	}
 	return regions
