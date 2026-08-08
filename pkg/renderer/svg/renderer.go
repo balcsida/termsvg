@@ -937,8 +937,8 @@ func (c *canvas) writeBand(band *preparedBand) {
 			fmt.Fprint(c.w, `<g>`)
 			c.writeSMILVerticalTranslate(c.w, band.offsets)
 		} else {
-			fmt.Fprintf(c.w, `<g style="animation:%s %s %s step-end">`,
-				band.name, animationDuration(c.plan.duration), c.loopCount())
+			fmt.Fprintf(c.w, `<g style="animation:%s %s %s step-end%s">`,
+				band.name, animationDuration(c.plan.duration), c.loopCount(), c.finiteAnimationFill())
 		}
 		c.writeFrameRows(band.tapeRows)
 		fmt.Fprint(c.w, `</g></svg>`)
@@ -965,6 +965,13 @@ func (c *canvas) writeBand(band *preparedBand) {
 	}
 	c.writeStateStrip(band.rows, width)
 	fmt.Fprint(c.w, `</g></svg>`)
+}
+
+func (c *canvas) finiteAnimationFill() string {
+	if infiniteLoop(c.config.LoopCount) {
+		return ""
+	}
+	return " forwards"
 }
 
 func (c *canvas) writeHrefSequence(frames []keyframePoint[int], ids []string) {

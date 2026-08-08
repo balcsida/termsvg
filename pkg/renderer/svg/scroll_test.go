@@ -6,6 +6,7 @@ import (
 	"context"
 	stdcolor "image/color"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -116,13 +117,78 @@ func TestScrollTapeCSSAndSMILEmissionRemainLossless(t *testing.T) {
 			if animation == AnimationCSS && !strings.Contains(got, "translateY(-500px)") {
 				t.Fatal("CSS vertical timeline missing")
 			}
+			if animation == AnimationCSS && !strings.Contains(got, " 2 step-end forwards") {
+				t.Fatal("finite CSS tape does not freeze its final transform")
+			}
 			if animation == AnimationSMIL && (!strings.Contains(got, `<animateTransform`) || !strings.Contains(got, `values="0 0;0 -25`)) {
 				t.Fatal("SMIL vertical timeline missing")
+			}
+			if animation == AnimationSMIL && !strings.Contains(got, `0 -500" keyTimes=`) {
+				t.Fatal("SMIL terminal transform is not the final tape state")
+			}
+			if animation == AnimationSMIL && !strings.Contains(got, `fill="freeze"`) {
+				t.Fatal("finite SMIL tape does not freeze its final transform")
 			}
 			if !strings.Contains(got, " 2 step-end") && !strings.Contains(got, `repeatCount="2"`) {
 				t.Fatal("finite loop count missing")
 			}
 		})
+	}
+}
+
+func TestExactBandReplacementDeltaIsAdditiveAndKeepsSnapshotOnTie(t *testing.T) {
+	snapshot := preparedContentCost{definitions: 100, styles: 40, active: 60, regionBytes: 999}
+	tape := preparedContentCost{definitions: 90, styles: 45, active: 50, regionBytes: 1}
+	if got := exactBandReplacementDelta(snapshot, tape); got != -15 {
+		t.Fatalf("replacement delta = %d, want -15", got)
+	}
+
+	// An unchanged neighboring band contributes equally to both complete
+	// ledgers and must cancel out of the candidate band's replacement delta.
+	snapshot.definitions += 73
+	tape.definitions += 73
+	if got := exactBandReplacementDelta(snapshot, tape); got != -15 {
+		t.Fatalf("replacement delta with shared neighbor = %d, want -15", got)
+	}
+
+	tie := snapshot
+	if scrollTapeWins(snapshot, tie) {
+		t.Fatal("zero replacement delta selected the tape")
+	}
+}
+
+func TestExactBandReplacementDeltaRebuildsSharedDefinitions(t *testing.T) {
+	rec := scrollRecording(120, 40, 21)
+	config := renderer.DefaultConfig()
+	plan, err := buildSemanticPlan(context.Background(), rec, false, 0, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := scrollCanvas(rec, &plan, config)
+	source := buildRowBands(&plan, plan.width, plan.height)[0]
+	snapshot, err := c.prepareLocalViewports(context.Background(), []rowBand{source, source})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tape, ok := detectUpwardScrollTape(source, rec.Colors)
+	if !ok {
+		t.Fatal("fixture did not produce a strict tape")
+	}
+	bands := slices.Clone(snapshot.bands)
+	bands[0].kind = bandScrollTape
+	bands[0].tapeRaw = tape.rows
+	bands[0].offsets = tape.offsets
+	bands[0].tapeHeight = len(tape.rows)
+	candidate, err := c.materializeBands(context.Background(), bands)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(snapshot.bands[1].content, candidate.bands[1].content) {
+		t.Fatal("candidate replacement changed the neighboring band")
+	}
+	want := candidate.cost.regionBytes - snapshot.cost.regionBytes
+	if got := exactBandReplacementDelta(snapshot.cost, candidate.cost); got != want {
+		t.Fatalf("replacement delta with rebuilt shared definitions = %d, want %d", got, want)
 	}
 }
 

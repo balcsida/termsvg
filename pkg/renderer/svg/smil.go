@@ -95,8 +95,12 @@ func (c *canvas) writeSMILAnimation(w io.Writer, element string, attributes []sm
 	for _, attribute := range attributes {
 		fmt.Fprintf(w, ` %s="%s"`, attribute.name, attribute.value)
 	}
-	fmt.Fprintf(w, ` calcMode="discrete" dur="%s" repeatCount="%s"/>`,
-		smilAnimationDuration(c.plan.duration), c.smilRepeatCount())
+	fill := ""
+	if !infiniteLoop(c.config.LoopCount) {
+		fill = ` fill="freeze"`
+	}
+	fmt.Fprintf(w, ` calcMode="discrete" dur="%s" repeatCount="%s"%s/>`,
+		smilAnimationDuration(c.plan.duration), c.smilRepeatCount(), fill)
 }
 
 func smilAnimationDuration(duration time.Duration) string {

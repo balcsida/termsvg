@@ -174,11 +174,23 @@ func (c *canvas) prepareScroll(ctx context.Context) (preparedContent, error) {
 		if err != nil {
 			return preparedContent{}, err
 		}
-		if candidate.cost.regionBytes < prepared.cost.regionBytes {
+		if scrollTapeWins(prepared.cost, candidate.cost) {
 			prepared = candidate
 		}
 	}
 	return prepared, nil
+}
+
+// exactBandReplacementDelta is the exact additive change in the complete
+// prepared-content ledger when one band is replaced and every other band is
+// held fixed. Shared definitions and styles are rebuilt in both ledgers, so
+// their attributable byte changes are included without double counting.
+func exactBandReplacementDelta(snapshot, tape preparedContentCost) int64 {
+	return tape.definitions - snapshot.definitions + tape.styles - snapshot.styles + tape.active - snapshot.active
+}
+
+func scrollTapeWins(snapshot, tape preparedContentCost) bool {
+	return exactBandReplacementDelta(snapshot, tape) < 0
 }
 
 func (c *canvas) prepareLocalViewports(ctx context.Context, bands []rowBand) (preparedContent, error) {
