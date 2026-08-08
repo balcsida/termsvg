@@ -161,6 +161,30 @@ func TestRegionMetricsUseNarrowLocalViewports(t *testing.T) {
 	}
 }
 
+func TestViewportAreaUsesLargestEmittedViewport(t *testing.T) {
+	states := [][]ir.Row{
+		append([]ir.Row{parityRow(0, parityRun("0000000000", 0, ir.CellAttrs{}))}, narrowRows("0")...),
+		append([]ir.Row{parityRow(0, parityRun("1111111111", 0, ir.CellAttrs{}))}, narrowRows("1")...),
+	}
+	metrics, err := New(renderer.DefaultConfig(), WithLayout(LayoutBands)).MeasureCandidate(
+		context.Background(), parityRecording(20, 20, states))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metrics.MaxViewportArea >= int64(metrics.MaxViewportWidth*metrics.MaxViewportHeight) {
+		t.Fatalf("maximum viewport area = %d; separate maxima product = %d", metrics.MaxViewportArea,
+			metrics.MaxViewportWidth*metrics.MaxViewportHeight)
+	}
+}
+
+func narrowRows(value string) []ir.Row {
+	rows := make([]ir.Row, 10)
+	for i := range rows {
+		rows[i] = parityRow(i+10, parityRun(value, 15, ir.CellAttrs{}))
+	}
+	return rows
+}
+
 func TestSparseRegionsTransformLessAreaThanFramesAndBands(t *testing.T) {
 	rec := regionBenchmarkRecordings()["120x40_four_distant_counters"]
 	metrics := map[LayoutMode]CandidateMetrics{}
@@ -213,6 +237,7 @@ func TestPreparedMetricsMatchSerializedStructure(t *testing.T) {
 			got.LocalViewportCount = 0
 			got.MaxViewportWidth = 0
 			got.MaxViewportHeight = 0
+			got.MaxViewportArea = 0
 			got.SourceActiveNodes = 0
 			got.SourceDefinitionNodes = 0
 			got.StaticUseShadowNodes = 0

@@ -100,7 +100,7 @@ func TestRuntimeCandidateComparator(t *testing.T) {
 	base := CandidateMetrics{
 		PeakLiveNodeEstimate: 10, DurationWeightedInstantiatedNodeNanos: 20,
 		UseTargetSwitches: 3, AnimationNodes: 4, AnimatedElements: 5,
-		LocalViewportCount: 6, MaxViewportWidth: 7, MaxViewportHeight: 8,
+		LocalViewportCount: 6, MaxViewportWidth: 7, MaxViewportHeight: 8, MaxViewportArea: 56,
 		MaxTranslatedArea: 9, FinalBytes: 100,
 	}
 	tests := []struct {
@@ -119,7 +119,7 @@ func TestRuntimeCandidateComparator(t *testing.T) {
 		{name: "animation nodes", left: metricWith(&base, func(m *CandidateMetrics) { m.AnimationNodes-- }), right: base, want: true},
 		{name: "animated elements", left: metricWith(&base, func(m *CandidateMetrics) { m.AnimatedElements-- }), right: base, want: true},
 		{name: "viewport count", left: metricWith(&base, func(m *CandidateMetrics) { m.LocalViewportCount-- }), right: base, want: true},
-		{name: "viewport area", left: metricWith(&base, func(m *CandidateMetrics) { m.MaxViewportWidth-- }), right: base, want: true},
+		{name: "viewport area", left: metricWith(&base, func(m *CandidateMetrics) { m.MaxViewportArea-- }), right: base, want: true},
 		{name: "translated area", left: metricWith(&base, func(m *CandidateMetrics) { m.MaxTranslatedArea-- }), right: base, want: true},
 		{name: "bytes", left: metricWith(&base, func(m *CandidateMetrics) { m.FinalBytes-- }), right: base, want: true},
 		{name: "fewer nodes beats far more animations", left: metricWith(&base, func(m *CandidateMetrics) {
@@ -153,22 +153,40 @@ func TestRuntimeSelectionKeepsStableOrderOnCompleteTie(t *testing.T) {
 	}
 }
 
-func TestRuntimeSelectionRejectsSyntheticHrefExpansion(t *testing.T) {
-	href := preparedCandidate{options: Options{Layout: LayoutFrames}, metrics: CandidateMetrics{
-		FinalBytes: 99, SourceActiveNodes: 5, SourceDefinitionNodes: 500,
-		PeakInstantiatedNodes: 1000, PeakLiveNodeEstimate: 100,
-		DurationWeightedInstantiatedNodeNanos: 10_000,
-	}}
-	translate := preparedCandidate{options: Options{Layout: LayoutBands}, metrics: CandidateMetrics{
-		FinalBytes: 100, SourceActiveNodes: 20, SourceDefinitionNodes: 5,
-		PeakInstantiatedNodes: 50, PeakLiveNodeEstimate: 10,
-		DurationWeightedInstantiatedNodeNanos: 100,
-	}}
-	if got := selectPreparedCandidate(AutoObjectiveSize, &href, &translate); got != &href {
-		t.Fatalf("size selected %q; want smaller href fixture", got.options.Layout)
+func TestRuntimeSelectionRejectsMeasuredHrefExpansion(t *testing.T) {
+	states := make([][]ir.Row, 12)
+	for state := range states {
+		states[state] = make([]ir.Row, len(states))
+		for row := range states[state] {
+			value := "0"
+			if state >= row {
+				value = "1"
+			}
+			states[state][row] = parityRow(row, parityRun(value, row*2, ir.CellAttrs{}))
+		}
 	}
-	if got := selectPreparedCandidate(AutoObjectiveRuntime, &href, &translate); got != &translate {
-		t.Fatalf("runtime selected %q; want lower-expansion translate fixture", got.options.Layout)
+	rec := parityRecording(24, 12, states)
+	config := renderer.DefaultConfig()
+	config.Minify = true
+	frameMetrics, err := New(config, WithLayout(LayoutFrames), WithAnimation(AnimationSMIL), WithFrameSwitch(FrameSwitchHref)).MeasureCandidate(context.Background(), rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bandMetrics, err := New(config, WithLayout(LayoutBands), WithAnimation(AnimationSMIL), WithFrameSwitch(FrameSwitchHref)).MeasureCandidate(context.Background(), rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frames := preparedCandidate{options: Options{Layout: LayoutFrames}, metrics: frameMetrics}
+	bands := preparedCandidate{options: Options{Layout: LayoutBands}, metrics: bandMetrics}
+	if bands.metrics.FinalBytes >= frames.metrics.FinalBytes || bands.metrics.MaxUseDepth < 2 ||
+		bands.metrics.PeakLiveNodeEstimate <= frames.metrics.PeakLiveNodeEstimate {
+		t.Fatalf("fixture does not expose href expansion: frames=%#v bands=%#v", frames.metrics, bands.metrics)
+	}
+	if got := selectPreparedCandidate(AutoObjectiveSize, &frames, &bands); got != &bands {
+		t.Fatalf("size selected %q; want smaller bands fixture", got.options.Layout)
+	}
+	if got := selectPreparedCandidate(AutoObjectiveRuntime, &frames, &bands); got != &frames {
+		t.Fatalf("runtime selected %q; want lower-expansion frames fixture", got.options.Layout)
 	}
 }
 
@@ -191,7 +209,7 @@ func TestAutoDebugLogsCandidateTableAndSelection(t *testing.T) {
 	for _, want := range []string{
 		"layout=frames", "bytes=10", "source_nodes=11", "definition_nodes=12",
 		"peak_instantiated_nodes=13", "animation_nodes=14", "viewport_count=15",
-		"translated_area=16", "objective=runtime", "selected=frames",
+		"viewport_area=0", "translated_area=16", "objective=runtime", "selected=frames",
 	} {
 		if !strings.Contains(output.String(), want) {
 			t.Fatalf("debug output %q does not contain %q", output.String(), want)

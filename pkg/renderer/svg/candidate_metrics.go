@@ -31,6 +31,7 @@ type CandidateMetrics struct {
 	LocalViewportCount                    int
 	MaxViewportWidth                      int
 	MaxViewportHeight                     int
+	MaxViewportArea                       int64
 	SourceActiveNodes                     int
 	SourceDefinitionNodes                 int
 	StaticUseShadowNodes                  uint64
@@ -55,6 +56,7 @@ func addPreparedMetrics(
 		metrics.LocalViewportCount++
 		metrics.MaxViewportWidth = max(metrics.MaxViewportWidth, band.width*ColWidth)
 		metrics.MaxViewportHeight = max(metrics.MaxViewportHeight, band.height*RowHeight)
+		metrics.MaxViewportArea = max(metrics.MaxViewportArea, int64(band.width*ColWidth)*int64(band.height*RowHeight))
 		if options.FrameSwitch == FrameSwitchTranslate && len(band.keyframes) > 1 {
 			addTranslatedSurface(metrics, band.width*ColWidth, band.height*RowHeight, len(band.rows))
 		}

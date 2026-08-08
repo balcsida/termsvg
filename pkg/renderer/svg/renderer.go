@@ -208,8 +208,6 @@ func selectPreparedCandidate(objective AutoObjective, candidates ...*preparedCan
 }
 
 func runtimeCandidateLess(left, right *CandidateMetrics) bool {
-	leftViewportArea := int64(left.MaxViewportWidth) * int64(left.MaxViewportHeight)
-	rightViewportArea := int64(right.MaxViewportWidth) * int64(right.MaxViewportHeight)
 	comparisons := [...]struct{ left, right uint64 }{
 		{left.PeakLiveNodeEstimate, right.PeakLiveNodeEstimate},
 		{left.DurationWeightedInstantiatedNodeNanos, right.DurationWeightedInstantiatedNodeNanos},
@@ -224,7 +222,7 @@ func runtimeCandidateLess(left, right *CandidateMetrics) bool {
 		{int64(left.AnimationNodes), int64(right.AnimationNodes)},
 		{int64(left.AnimatedElements), int64(right.AnimatedElements)},
 		{int64(left.LocalViewportCount), int64(right.LocalViewportCount)},
-		{leftViewportArea, rightViewportArea},
+		{left.MaxViewportArea, right.MaxViewportArea},
 		{left.MaxTranslatedArea, right.MaxTranslatedArea},
 		{left.FinalBytes, right.FinalBytes},
 	}
@@ -243,10 +241,11 @@ func (r *Renderer) logAutoCandidates(selected *preparedCandidate, candidates ...
 	for _, candidate := range candidates {
 		metrics := candidate.metrics
 		log.Printf("[SVG] auto candidate layout=%s bytes=%d source_nodes=%d definition_nodes=%d "+
-			"peak_instantiated_nodes=%d animation_nodes=%d viewport_count=%d translated_area=%d "+
+			"peak_instantiated_nodes=%d animation_nodes=%d viewport_count=%d viewport_area=%d translated_area=%d "+
 			"objective=%s selected=%s",
 			candidate.options.Layout, metrics.FinalBytes, metrics.SourceActiveNodes, metrics.SourceDefinitionNodes,
-			metrics.PeakInstantiatedNodes, metrics.AnimationNodes, metrics.LocalViewportCount, metrics.MaxTranslatedArea,
+			metrics.PeakInstantiatedNodes, metrics.AnimationNodes, metrics.LocalViewportCount, metrics.MaxViewportArea,
+			metrics.MaxTranslatedArea,
 			r.options.AutoObjective, selected.options.Layout)
 	}
 }
