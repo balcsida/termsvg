@@ -175,33 +175,50 @@ func (c *canvas) prepareBands(ctx context.Context) (preparedContent, error) {
 
 func (c *canvas) prepareScroll(ctx context.Context) (preparedContent, error) {
 	bands := buildRowBands(&c.plan, c.plan.width, c.plan.height)
-	prepared, err := c.prepareLocalViewports(ctx, bands)
+	probe := *c
+	probe.options.Primitives = PrimitiveSnapshots
+	snapshot, err := probe.prepareLocalViewports(ctx, bands)
 	if err != nil {
 		return preparedContent{}, err
 	}
+	retained, err := c.prepareLocalViewports(ctx, bands)
+	if err != nil {
+		return preparedContent{}, err
+	}
+	prepared := strictSmallestPrepared(snapshot, retained)
 	for i, source := range bands {
-		if prepared.bands[i].kind != bandSnapshot {
-			continue
-		}
 		tape, ok := detectUpwardScrollTape(source, c.rec.Colors)
 		if !ok {
 			continue
 		}
 		candidateBands := slices.Clone(prepared.bands)
-		candidateBands[i].kind = bandScrollTape
-		candidateBands[i].tapeRaw = tape.rows
-		candidateBands[i].offsets = tape.offsets
-		candidateBands[i].direction = 1
-		candidateBands[i].tapeHeight = len(tape.rows)
+		candidateBands[i] = scrollTapeCandidateBand(snapshot.bands[i], tape)
 		candidate, err := c.materializeBands(ctx, candidateBands)
 		if err != nil {
 			return preparedContent{}, err
 		}
-		if scrollTapeWins(prepared.cost, candidate.cost) {
-			prepared = candidate
-		}
+		prepared = strictSmallestPrepared(prepared, candidate)
 	}
 	return prepared, nil
+}
+
+func scrollTapeCandidateBand(snapshot preparedBand, tape scrollTape) preparedBand {
+	snapshot.kind = bandScrollTape
+	snapshot.tapeRaw = tape.rows
+	snapshot.offsets = tape.offsets
+	snapshot.direction = 1
+	snapshot.tapeHeight = len(tape.rows)
+	return snapshot
+}
+
+func strictSmallestPrepared(candidates ...preparedContent) preparedContent {
+	selected := candidates[0]
+	for _, candidate := range candidates[1:] {
+		if candidate.cost.regionBytes < selected.cost.regionBytes {
+			selected = candidate
+		}
+	}
+	return selected
 }
 
 // exactBandReplacementDelta is the exact additive change in the complete

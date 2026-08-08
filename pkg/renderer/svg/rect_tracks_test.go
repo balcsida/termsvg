@@ -133,6 +133,45 @@ func TestRetainedRectTieKeepsSnapshot(t *testing.T) {
 	}
 }
 
+func TestRetainedRectEmitsCompleteExactTimelines(t *testing.T) {
+	catalog := termcolor.NewCatalog(color.RGBA{R: 255, G: 255, B: 255, A: 255}, color.RGBA{A: 255})
+	red := catalog.Register(termcolor.FromRGB(180, 20, 20), nil)
+	blue := catalog.Register(termcolor.FromRGB(20, 80, 180), nil)
+	row := func(x, width int, bg termcolor.ID) []ir.Row {
+		if width == 0 {
+			return []ir.Row{{Y: 0}}
+		}
+		return []ir.Row{{Y: 0, Runs: []ir.TextRun{{Text: strings.Repeat(" ", width), StartCol: x, EndCol: x + width, Attrs: ir.CellAttrs{BG: bg}}}}}
+	}
+	content := timeline[[]ir.Row]{duration: 4 * time.Second, points: []timelinePoint[[]ir.Row]{
+		{time: 0, state: row(0, 0, red)},
+		{time: time.Second, state: row(1, 2, red)},
+		{time: 2 * time.Second, state: row(3, 4, blue)},
+		{time: 3 * time.Second, state: row(0, 0, blue)},
+		{time: 4 * time.Second, state: row(0, 0, blue)},
+	}}
+	c := canvas{
+		rec: &ir.Recording{Colors: catalog}, plan: renderPlan{duration: 4 * time.Second},
+		config: renderer.Config{LoopCount: 2}, classNames: catalog.GenerateClassNames(), style: stylePlan{scheme: styleLegacy},
+	}
+	track, _, ok := c.retainedRectCandidate(rowBand{height: 1, content: content})
+	if !ok {
+		t.Fatal("exact rectangle fixture was rejected")
+	}
+	var out strings.Builder
+	c.w = &out
+	c.writeRetainedRect(&track)
+	for _, want := range []string{
+		`<animate attributeName="x" values="12;12;36;36;36" keyTimes="0;.25;.5;.75;1" calcMode="discrete" dur="4s" repeatCount="2" fill="freeze"/>`,
+		`<animate attributeName="width" values="0;24;48;0;0" keyTimes="0;.25;.5;.75;1" calcMode="discrete" dur="4s" repeatCount="2" fill="freeze"/>`,
+		`<animate attributeName="fill" values="#B41414;#B41414;#1450B4;#1450B4;#1450B4" keyTimes="0;.25;.5;.75;1" calcMode="discrete" dur="4s" repeatCount="2" fill="freeze"/>`,
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("exact retained timeline missing %s in %s", want, out.String())
+		}
+	}
+}
+
 type rectState struct {
 	x, width, secondX, secondWidth int
 	alternate                      bool

@@ -190,6 +190,28 @@ func TestExactBandReplacementDeltaIsAdditiveAndKeepsSnapshotOnTie(t *testing.T) 
 	}
 }
 
+func TestScrollAndRectTracksChooseStrictSmallestFromSnapshot(t *testing.T) {
+	snapshot := preparedContent{bands: []preparedBand{{kind: bandSnapshot}}, cost: preparedContentCost{regionBytes: 100}}
+	retained := preparedContent{bands: []preparedBand{{kind: bandRetainedRect}}, cost: preparedContentCost{regionBytes: 90}}
+	tape := preparedContent{bands: []preparedBand{{kind: bandScrollTape}}, cost: preparedContentCost{regionBytes: 80}}
+	if got := strictSmallestPrepared(snapshot, retained, tape); got.bands[0].kind != bandScrollTape {
+		t.Fatalf("selected kind = %d, want scroll tape", got.bands[0].kind)
+	}
+	if got := strictSmallestPrepared(snapshot, preparedContent{bands: retained.bands, cost: snapshot.cost},
+		preparedContent{bands: tape.bands, cost: snapshot.cost}); got.bands[0].kind != bandSnapshot {
+		t.Fatalf("tie selected kind = %d, want snapshot", got.bands[0].kind)
+	}
+}
+
+func TestScrollTapeCandidateRestoresSnapshotBandBeforeConversion(t *testing.T) {
+	snapshot := preparedBand{kind: bandSnapshot, width: 4, height: 2, content: timeline[[]ir.Row]{duration: time.Second}}
+	tape := scrollTape{rows: []ir.Row{{Y: 0}}, offsets: []keyframePoint[int]{{state: 0}, {selector: "100%", state: 1}}}
+	got := scrollTapeCandidateBand(snapshot, tape)
+	if got.kind != bandScrollTape || got.track != nil || got.content.duration != snapshot.content.duration || got.tapeHeight != 1 {
+		t.Fatalf("scroll candidate = %#v", got)
+	}
+}
+
 func TestExactBandReplacementDeltaRebuildsSharedDefinitions(t *testing.T) {
 	rec := scrollRecording(120, 40, 21)
 	config := renderer.DefaultConfig()
