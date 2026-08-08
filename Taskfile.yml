@@ -84,12 +84,12 @@ tasks:
     generates:
       - ./examples/*.svg
     cmds:
-      - ./termsvg export "examples/256colors.cast" -m --svg-layout=bands --svg-animation=smil --svg-frame-switch=href -o "examples/256colors.svg"
+      - ./termsvg export "examples/256colors.cast" -m --svg-layout=bands --svg-animation=smil --svg-frame-switch=href --svg-style=auto -o "examples/256colors.svg"
       - ./termsvg export "examples/444816.cast" -m --svg-layout=frames --svg-animation=smil --svg-frame-switch=href --svg-max-fps=30 -o "examples/444816.svg"
       - ./termsvg export "examples/444816.cast" -m -n --svg-layout=frames --svg-animation=smil --svg-frame-switch=href --svg-max-fps=30 -o "examples/444816_borderless.svg"
-      - ./termsvg export "examples/htop.cast" -m --svg-layout=frames --svg-animation=smil --svg-frame-switch=href --svg-max-fps=30 -o "examples/htop.svg"
-      - ./termsvg export "examples/rgb.cast" -m --svg-layout=regions --svg-animation=smil --svg-frame-switch=translate --svg-max-fps=30 -o "examples/rgb.svg"
-      - ./termsvg export "examples/session.cast" -m --svg-layout=bands --svg-animation=smil --svg-frame-switch=href --svg-max-fps=30 -o "examples/session.svg"
+      - ./termsvg export "examples/htop.cast" -m --svg-layout=frames --svg-animation=smil --svg-frame-switch=href --svg-max-fps=30 --svg-style=auto -o "examples/htop.svg"
+      - ./termsvg export "examples/rgb.cast" -m --svg-layout=regions --svg-animation=smil --svg-frame-switch=translate --svg-max-fps=30 --svg-style=auto -o "examples/rgb.svg"
+      - ./termsvg export "examples/session.cast" -m --svg-layout=bands --svg-animation=smil --svg-frame-switch=href --svg-max-fps=30 --svg-style=auto -o "examples/session.svg"
       - ./scripts/update-filesize.sh
   examples:verify:
     desc: Regenerate examples and fail if tracked artifacts or size documentation drift
