@@ -10,7 +10,7 @@ import (
 
 func TestDefaultOptionsPreserveCompatibilityPath(t *testing.T) {
 	got := DefaultOptions()
-	want := Options{Layout: LayoutFrames, Animation: AnimationCSS, FrameSwitch: FrameSwitchTranslate, AutoObjective: AutoObjectiveSize}
+	want := Options{Layout: LayoutFrames, Animation: AnimationCSS, FrameSwitch: FrameSwitchTranslate, AutoObjective: AutoObjectiveSize, Style: StyleLegacy}
 	if got != want {
 		t.Fatalf("DefaultOptions() = %#v, want %#v", got, want)
 	}
@@ -35,6 +35,7 @@ func TestRendererOptionsValidation(t *testing.T) {
 		{name: "layout", options: Options{Layout: "columns", Animation: AnimationCSS}},
 		{name: "animation", options: Options{Layout: LayoutFrames, Animation: "script"}},
 		{name: "objective", options: Options{Layout: LayoutAuto, Animation: AnimationCSS, AutoObjective: "balanced"}},
+		{name: "style", options: Options{Layout: LayoutFrames, Animation: AnimationCSS, Style: "compact"}},
 		{name: "runtime requires auto", options: Options{Layout: LayoutFrames, Animation: AnimationCSS, AutoObjective: AutoObjectiveRuntime}},
 		{name: "negative FPS", options: Options{Layout: LayoutFrames, Animation: AnimationCSS, MaxFPS: -1}},
 		{
@@ -58,10 +59,10 @@ func TestNewAcceptsFunctionalOptionsWithoutChangingExistingCallers(t *testing.T)
 	if got := New(config); got.options != DefaultOptions() {
 		t.Fatalf("New(config) options = %#v", got.options)
 	}
-	got := New(config, WithLayout(LayoutAuto), WithAnimation(AnimationSMIL), WithMaxFPS(30), WithAutoObjective(AutoObjectiveRuntime))
+	got := New(config, WithLayout(LayoutAuto), WithAnimation(AnimationSMIL), WithMaxFPS(30), WithAutoObjective(AutoObjectiveRuntime), WithStyleMode(StyleAuto))
 	want := Options{
 		Layout: LayoutAuto, Animation: AnimationSMIL, FrameSwitch: FrameSwitchTranslate, MaxFPS: 30,
-		AutoObjective: AutoObjectiveRuntime,
+		AutoObjective: AutoObjectiveRuntime, Style: StyleAuto,
 	}
 	if got.options != want {
 		t.Fatalf("functional options = %#v, want %#v", got.options, want)

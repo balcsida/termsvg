@@ -98,6 +98,16 @@ func TestSemanticPlaybackParityTUIFixtures(t *testing.T) {
 	}
 }
 
+func TestAutoStylePreservesPreparedSemantics(t *testing.T) {
+	for name, rec := range tuiParityFixtures() {
+		for _, layout := range []LayoutMode{LayoutFrames, LayoutBands, LayoutRegions} {
+			t.Run(name+"/"+string(layout), func(t *testing.T) {
+				assertSemanticParity(t, rec, WithLayout(layout), WithStyleMode(StyleAuto))
+			})
+		}
+	}
+}
+
 func TestSemanticPlaybackParityDeterministicRandomRecordings(t *testing.T) {
 	rng := rand.New(rand.NewSource(0x5445524d535647)) //nolint:gosec // deterministic test coverage
 	for i := range 64 {

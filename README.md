@@ -122,13 +122,21 @@ Available options:
 - `-m, --minify` - Minify svg using [Minify](https://github.com/tdewolff/minify)
 - `--svg-layout=frames|bands|regions|auto` - Select the compatibility frame strip, experimental local layouts, or opt-in auto selection
 - `--svg-auto-objective=size|runtime` - Compare auto candidates by exact bytes (default) or deterministic structural runtime proxies
+- `--svg-style=legacy|auto` - Keep compatibility paint classes (default) or opt into exact, profitability-driven paint encoding
 - `--svg-animation=css|smil` - Select CSS keyframes or the experimental discrete SMIL backend
 - `--svg-frame-switch=translate|href` - Select translated strips or experimental SMIL `href` switching
 - `--svg-max-fps=<fps>` - Opt into lossy SVG timeline sampling; `0` preserves every state
 
-The SVG defaults remain `frames`, `css`, `translate`, `0`, and `size`, so existing exports keep their
+The SVG defaults remain `frames`, `css`, `translate`, `0`, `size`, and `legacy`, so existing exports keep their
 lossless compatibility path. SVG-specific non-default options are rejected for
 GIF and WebM exports.
+
+`--svg-style=auto` may inherit the default foreground on the clipped content
+group. This keeps window decoration and resources outside the inheritance
+boundary, but it does not isolate inline SVG from host-page CSS. Standalone,
+neutral-inline, broad-host-rule, `<img>`, and `<object>` fixtures are in
+[`pkg/renderer/svg/testdata/browser`](pkg/renderer/svg/testdata/browser).
+They are embedding checks, not a Safari performance claim.
 
 ## Example
 

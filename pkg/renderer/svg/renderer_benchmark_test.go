@@ -86,6 +86,35 @@ func BenchmarkAutoSelection(b *testing.B) {
 	}
 }
 
+func BenchmarkStylePlanSelection(b *testing.B) {
+	rec := colorFrames()
+	for _, style := range []StyleMode{StyleLegacy, StyleAuto} {
+		for _, minify := range []bool{false, true} {
+			name := "raw"
+			if minify {
+				name = "minified"
+			}
+			b.Run(string(style)+"/"+name, func(b *testing.B) {
+				config := renderer.DefaultConfig()
+				config.Minify = minify
+				r := New(config, WithStyleMode(style))
+				metrics, err := r.MeasureCandidate(context.Background(), rec)
+				if err != nil {
+					b.Fatal(err)
+				}
+				b.ReportAllocs()
+				b.ResetTimer()
+				for range b.N {
+					if _, err := r.MeasureCandidate(context.Background(), rec); err != nil {
+						b.Fatal(err)
+					}
+				}
+				b.ReportMetric(float64(metrics.FinalBytes), "svg-bytes")
+			})
+		}
+	}
+}
+
 func BenchmarkSelectedSerialization(b *testing.B) {
 	rec := staticFrames(200)
 	config := renderer.DefaultConfig()

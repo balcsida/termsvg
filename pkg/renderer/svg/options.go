@@ -17,12 +17,16 @@ type FrameSwitchMode string
 // AutoObjective selects how auto layout candidates are compared.
 type AutoObjective string
 
+// StyleMode selects the SVG paint encoding.
+type StyleMode string
+
 // Options contains SVG-specific renderer settings.
 type Options struct {
 	Layout        LayoutMode
 	Animation     AnimationMode
 	FrameSwitch   FrameSwitchMode
 	AutoObjective AutoObjective
+	Style         StyleMode
 	// MaxFPS limits SVG timeline samples. Zero preserves every source state.
 	MaxFPS int
 }
@@ -55,6 +59,9 @@ const (
 
 	AutoObjectiveSize    AutoObjective = "size"
 	AutoObjectiveRuntime AutoObjective = "runtime"
+
+	StyleLegacy StyleMode = "legacy"
+	StyleAuto   StyleMode = "auto"
 )
 
 func (o Options) usesLocalViewports() bool {
@@ -68,6 +75,7 @@ func DefaultOptions() Options {
 		Animation:     AnimationCSS,
 		FrameSwitch:   FrameSwitchTranslate,
 		AutoObjective: AutoObjectiveSize,
+		Style:         StyleLegacy,
 	}
 }
 
@@ -96,6 +104,11 @@ func WithAutoObjective(objective AutoObjective) Option {
 	return func(options *Options) { options.AutoObjective = objective }
 }
 
+// WithStyleMode selects the compatibility or profitability-driven paint encoding.
+func WithStyleMode(style StyleMode) Option {
+	return func(options *Options) { options.Style = style }
+}
+
 func (o Options) normalized() Options {
 	if o.Layout == "" {
 		o.Layout = LayoutFrames
@@ -108,6 +121,9 @@ func (o Options) normalized() Options {
 	}
 	if o.AutoObjective == "" {
 		o.AutoObjective = AutoObjectiveSize
+	}
+	if o.Style == "" {
+		o.Style = StyleLegacy
 	}
 	return o
 }
@@ -134,6 +150,11 @@ func (o Options) Validate() error {
 	case AutoObjectiveSize, AutoObjectiveRuntime:
 	default:
 		return fmt.Errorf("unsupported SVG auto objective %q", o.AutoObjective)
+	}
+	switch o.Style {
+	case StyleLegacy, StyleAuto:
+	default:
+		return fmt.Errorf("unsupported SVG style mode %q", o.Style)
 	}
 	if o.AutoObjective != AutoObjectiveSize && o.Layout != LayoutAuto {
 		return fmt.Errorf("SVG auto objective %q requires auto layout", o.AutoObjective)

@@ -35,6 +35,7 @@ type canvas struct {
 	config     renderer.Config
 	options    Options
 	classNames map[color.ID]string
+	style      stylePlan
 	metrics    *CandidateMetrics
 }
 
@@ -59,6 +60,7 @@ type preparedCandidate struct {
 	content preparedContent
 	metrics CandidateMetrics
 	cost    preparedCandidateCost
+	style   stylePlan
 }
 
 type countingWriter struct {
@@ -257,6 +259,36 @@ func prepareCandidate(
 	config *renderer.Config,
 	options Options,
 ) (*preparedCandidate, error) {
+	if options.Style == StyleAuto {
+		legacy, _, err := prepareStyleCandidate(ctx, rec, plan, config, options, styleLegacy)
+		if err != nil {
+			return nil, err
+		}
+		selected := legacy
+		for _, scheme := range []styleScheme{styleAtomic, styleComposite, styleInheritedAtomic, styleInheritedComposite} {
+			candidate, stable, err := prepareStyleCandidate(ctx, rec, plan, config, options, scheme)
+			if err != nil {
+				return nil, err
+			}
+			if stable && candidate.cost.finalBytes < selected.cost.finalBytes {
+				selected = candidate
+			}
+		}
+		attachStyleCostLedger(rec, plan, config, selected)
+		return selected, nil
+	}
+	candidate, _, err := prepareStyleCandidate(ctx, rec, plan, config, options, styleLegacy)
+	return candidate, err
+}
+
+func prepareStyleCandidate(
+	ctx context.Context,
+	rec *ir.Recording,
+	plan *semanticPlan,
+	config *renderer.Config,
+	options Options,
+	scheme styleScheme,
+) (*preparedCandidate, bool, error) {
 	c := &canvas{
 		rec:        rec,
 		plan:       *plan,
@@ -264,17 +296,58 @@ func prepareCandidate(
 		options:    options,
 		classNames: rec.Colors.GenerateClassNames(),
 	}
-	content, err := c.prepareContentContext(ctx)
-	if err != nil {
-		return nil, err
+	c.style = stylePlan{scheme: styleLegacy}
+	if options.Style == StyleAuto {
+		c.style = c.legacyStylePlan()
 	}
-	candidate := &preparedCandidate{plan: plan, options: options, content: content}
+	if scheme == styleLegacy {
+		content, err := c.prepareContentContext(ctx)
+		if err != nil {
+			return nil, false, err
+		}
+		if options.Style == StyleAuto {
+			c.style.occurrences = c.countPaintOccurrences(&content)
+		}
+		candidate, err := finishPreparedCandidate(c, plan, options, content)
+		return candidate, true, err
+	}
+
+	style := c.buildStylePlan(scheme, paintOccurrences{texts: map[textStyleKey]int{}, backgrounds: map[color.ID]int{}})
+	// ponytail: four concrete recomputations cover naming/interning feedback; unstable opt-in schemes fall back to legacy.
+	for range 4 {
+		c.style = style
+		content, err := c.prepareContentContext(ctx)
+		if err != nil {
+			return nil, false, err
+		}
+		next := c.buildStylePlan(scheme, c.countPaintOccurrences(&content))
+		if stylePlanEqual(style, next) {
+			c.style = next
+			candidate, err := finishPreparedCandidate(c, plan, options, content)
+			return candidate, true, err
+		}
+		style = next
+	}
+	return nil, false, nil
+}
+
+func finishPreparedCandidate(c *canvas, plan *semanticPlan, options Options, content preparedContent) (*preparedCandidate, error) {
+	candidate := &preparedCandidate{plan: plan, options: options, content: content, style: c.style}
 	addPreparedMetrics(&candidate.metrics, &content, options, c.contentWidth(), c.contentHeight())
 	if err := addStructuralMetrics(&candidate.metrics, c, &content); err != nil {
 		return nil, err
 	}
 	candidate.cost = buildPreparedCandidateCost(c, candidate)
 	return candidate, nil
+}
+
+func attachStyleCostLedger(rec *ir.Recording, plan *semanticPlan, config *renderer.Config, candidate *preparedCandidate) {
+	c := &canvas{
+		rec: rec, plan: *plan, config: *config, options: candidate.options,
+		classNames: rec.Colors.GenerateClassNames(), style: candidate.style,
+	}
+	candidate.style.cost = c.buildStyleCostLedger()
+	candidate.style.styleBytes = candidate.style.cost.total
 }
 
 func (r *Renderer) measureCandidate(ctx context.Context, rec *ir.Recording, candidate *preparedCandidate) error {
@@ -306,6 +379,7 @@ func (r *Renderer) serializeCandidate(
 	c := &canvas{
 		w: buf, rec: rec, plan: *candidate.plan, config: r.config, options: candidate.options,
 		classNames: rec.Colors.GenerateClassNames(), metrics: &candidate.metrics,
+		style: candidate.style,
 	}
 	if err := c.render(ctx, &candidate.content); err != nil {
 		return err
@@ -424,7 +498,8 @@ func (c *canvas) writeDefs(content *preparedContent) {
 }
 
 func (c *canvas) writeContentGroupOpen(contentY int) {
-	fmt.Fprintf(c.w, `<g transform="translate(%s,%s)" clip-path="url(#clip)">`, c.xmlInt(Padding), c.xmlInt(contentY))
+	fmt.Fprintf(c.w, `<g transform="translate(%s,%s)" clip-path="url(#clip)"%s>`,
+		c.xmlInt(Padding), c.xmlInt(contentY), c.style.contentGroupAttributes)
 }
 
 func (c *canvas) writeBackground() {
@@ -474,39 +549,54 @@ func (c *canvas) writeStyles(content *preparedContent) {
 		sb.WriteString("@keyframes blink{0%,50%{opacity:1}50.01%,100%{opacity:0}}")
 	}
 
-	// Default text style (white-space:pre preserves spaces, survives minification)
-	fgHex := color.RGBAtoHex(c.rec.Colors.DefaultForeground())
-	fmt.Fprintf(&sb, "text{font-family:%s;font-size:%dpx;fill:%s;white-space:pre}",
-		c.config.FontFamily, c.config.FontSize, fgHex)
-
-	if c.plan.cursorEverVisible {
-		fmt.Fprintf(&sb, ".cursor{fill:%s;animation:blink 1s step-end infinite}", fgHex)
-	}
-
-	// Color classes
-	for _, id := range c.visibleColorIDs() {
-		rgba := c.rec.Colors.Resolved(id)
-		className := c.classNames[id]
-		hex := color.RGBAtoHex(rgba)
-		fmt.Fprintf(&sb, ".%s{fill:%s}", className, hex)
-	}
-
-	// Attribute classes (only if used)
-	if c.rec.Stats.HasBold {
-		sb.WriteString(".bold{font-weight:bold}")
-	}
-	if c.rec.Stats.HasItalic {
-		sb.WriteString(".italic{font-style:italic}")
-	}
-	if c.rec.Stats.HasUnderline {
-		sb.WriteString(".underline{text-decoration:underline}")
-	}
-	if c.rec.Stats.HasDim {
-		sb.WriteString(".dim{opacity:0.5}")
-	}
+	c.writePaintStyles(&sb)
 
 	sb.WriteString("</style>")
 	fmt.Fprint(c.w, sb.String())
+}
+
+func (c *canvas) writePaintStyles(sb *strings.Builder) {
+	// Default text style (white-space:pre preserves spaces, survives minification)
+	fgHex := color.RGBAtoHex(c.rec.Colors.DefaultForeground())
+	if c.style.scheme == "" || c.style.scheme == styleLegacy {
+		fmt.Fprintf(sb, "text{font-family:%s;font-size:%dpx;fill:%s;white-space:pre}",
+			c.config.FontFamily, c.config.FontSize, fgHex)
+	} else {
+		fmt.Fprintf(sb, "text{%s}", c.style.textBaseRule)
+	}
+
+	if c.plan.cursorEverVisible && (c.style.scheme == "" || c.style.scheme == styleLegacy) {
+		fmt.Fprintf(sb, ".cursor{fill:%s;animation:blink 1s step-end infinite}", fgHex)
+	}
+
+	if c.style.scheme == "" || c.style.scheme == styleLegacy {
+		// Color classes
+		for _, id := range c.visibleColorIDs() {
+			rgba := c.rec.Colors.Resolved(id)
+			className := c.classNames[id]
+			hex := color.RGBAtoHex(rgba)
+			fmt.Fprintf(sb, ".%s{fill:%s}", className, hex)
+		}
+
+		// Attribute classes (only if used)
+		if c.rec.Stats.HasBold {
+			sb.WriteString(".bold{font-weight:bold}")
+		}
+		if c.rec.Stats.HasItalic {
+			sb.WriteString(".italic{font-style:italic}")
+		}
+		if c.rec.Stats.HasUnderline {
+			sb.WriteString(".underline{text-decoration:underline}")
+		}
+		if c.rec.Stats.HasDim {
+			sb.WriteString(".dim{opacity:0.5}")
+		}
+	} else {
+		for _, rule := range c.style.rules {
+			fmt.Fprintf(sb, ".%s{%s}", rule.class, rule.declarations)
+		}
+	}
+
 }
 
 func (c *canvas) visibleColorIDs() []color.ID {
@@ -922,9 +1012,15 @@ func (c *canvas) writeRow(w io.Writer, row ir.Row) {
 		if x != 0 {
 			xAttr = fmt.Sprintf(` x="%s"`, c.xmlInt(x))
 		}
-		fmt.Fprintf(w, `<rect class="%s"%s y="%s" width="%s" height="%s"/>`,
-			c.classNames[span.colorID], xAttr, c.xmlInt(row.Y*RowHeight),
-			c.xmlInt((span.endCol-span.startCol)*ColWidth), c.xmlInt(RowHeight))
+		if c.style.scheme == "" || c.style.scheme == styleLegacy {
+			fmt.Fprintf(w, `<rect class="%s"%s y="%s" width="%s" height="%s"/>`,
+				c.classNames[span.colorID], xAttr, c.xmlInt(row.Y*RowHeight),
+				c.xmlInt((span.endCol-span.startCol)*ColWidth), c.xmlInt(RowHeight))
+		} else {
+			fmt.Fprintf(w, `<rect%s%s y="%s" width="%s" height="%s"/>`,
+				styleAttributes(c.style.backgrounds[span.colorID]), xAttr, c.xmlInt(row.Y*RowHeight),
+				c.xmlInt((span.endCol-span.startCol)*ColWidth), c.xmlInt(RowHeight))
+		}
 	}
 	for _, run := range row.Runs {
 		c.writeTextRun(w, run, row.Y)
@@ -991,7 +1087,11 @@ func (c *canvas) writeCursor() {
 	if len(frames) > 1 && c.options.Animation == AnimationSMIL {
 		c.writeSMILCursor(c.w, frames)
 	}
-	fmt.Fprintf(c.w, `<rect class="cursor" width="%s" height="%s"/></g>`, c.xmlInt(ColWidth), c.xmlInt(RowHeight))
+	cursorClass := "cursor"
+	if c.style.scheme != "" && c.style.scheme != styleLegacy {
+		cursorClass = c.style.cursorClass
+	}
+	fmt.Fprintf(c.w, `<rect class="%s" width="%s" height="%s"/></g>`, cursorClass, c.xmlInt(ColWidth), c.xmlInt(RowHeight))
 }
 
 func (c *canvas) writeTextRun(w io.Writer, run ir.TextRun, rowY int) {
@@ -1008,6 +1108,16 @@ func (c *canvas) writeTextRun(w io.Writer, run ir.TextRun, rowY int) {
 
 	x := startCol * ColWidth
 	y := (rowY*RowHeight + RowHeight) - 5 // baseline offset
+	xAttr := ""
+	if x != 0 {
+		xAttr = fmt.Sprintf(` x="%s"`, c.xmlInt(x))
+	}
+
+	if c.style.scheme != "" && c.style.scheme != styleLegacy {
+		key := textStyleKey{run.Attrs.FG, run.Attrs.Bold, run.Attrs.Italic, run.Attrs.Underline, run.Attrs.Dim}
+		fmt.Fprintf(w, `<text%s y="%s"%s>%s</text>`, xAttr, c.xmlInt(y), styleAttributes(c.style.texts[key]), svgTextEscaper.Replace(text))
+		return
+	}
 
 	// Build class list
 	var classes []string
@@ -1028,10 +1138,6 @@ func (c *canvas) writeTextRun(w io.Writer, run ir.TextRun, rowY int) {
 	}
 
 	// Build attributes
-	xAttr := ""
-	if x != 0 {
-		xAttr = fmt.Sprintf(` x="%s"`, c.xmlInt(x))
-	}
 	classAttr := ""
 	if len(classes) > 0 {
 		classAttr = fmt.Sprintf(" class=%q", strings.Join(classes, " "))
