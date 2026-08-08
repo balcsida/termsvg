@@ -650,7 +650,7 @@ func addElementID(svg, id string) string {
 		prefix := "<" + name
 		if strings.HasPrefix(start, prefix) && (len(start) == len(prefix)+1 || start[len(prefix)] == ' ' || start[len(prefix)] == '/') {
 			if strings.Contains(start, ` id="`) {
-				return svg
+				return `<g id="` + id + `">` + svg + `</g>`
 			}
 			return prefix + ` id="` + id + `"` + strings.TrimPrefix(svg, prefix)
 		}

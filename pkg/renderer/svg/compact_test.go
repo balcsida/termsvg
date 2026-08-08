@@ -64,7 +64,7 @@ func TestAddElementIDAvoidsRedundantGroup(t *testing.T) {
 		`<text y="20">x</text>`:            `<text id="a" y="20">x</text>`,
 		`<rect y="0" width="12"/>`:         `<rect id="a" y="0" width="12"/>`,
 		`<use href="#b"/>`:                 `<use id="a" href="#b"/>`,
-		`<text id="b">x</text>`:            `<text id="b">x</text>`,
+		`<text id="b">x</text>`:            `<g id="a"><text id="b">x</text></g>`,
 		`<text>one</text><text>two</text>`: `<text id="a">one</text><text>two</text>`,
 	}
 	for input, want := range tests {
