@@ -136,6 +136,39 @@ func TestScrollTapeCSSAndSMILEmissionRemainLossless(t *testing.T) {
 	}
 }
 
+func TestFiniteScrollLayoutFreezesTapeFallbackBandAndCursor(t *testing.T) {
+	rec := scrollRecording(120, 40, 21)
+	rec.Height = 42
+	for i := range rec.Frames {
+		rec.Frames[i].Rows = append(rec.Frames[i].Rows, ir.Row{Y: 41, Runs: []ir.TextRun{{
+			Text: string(rune('a' + i)), StartCol: 0, EndCol: 1,
+		}}})
+	}
+	config := renderer.DefaultConfig()
+	config.LoopCount = 2
+	assertSemanticParityWithConfig(t, rec, config, WithLayout(LayoutScroll))
+
+	var out bytes.Buffer
+	if err := New(config, WithLayout(LayoutScroll)).Render(context.Background(), rec, &out); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	if count := strings.Count(got, "step-end forwards"); count != 3 {
+		t.Fatalf("finite fill count = %d, want tape, fallback band, and cursor: %s", count, got)
+	}
+	if !strings.Contains(got, `animation:cursor 20s 2 step-end forwards`) {
+		t.Fatal("moving cursor does not retain its terminal state")
+	}
+
+	var legacy bytes.Buffer
+	if err := New(config, WithLayout(LayoutBands)).Render(context.Background(), rec, &legacy); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(legacy.String(), "step-end forwards") {
+		t.Fatal("finite fill changed the legacy band layout")
+	}
+}
+
 func TestExactBandReplacementDeltaIsAdditiveAndKeepsSnapshotOnTie(t *testing.T) {
 	snapshot := preparedContentCost{definitions: 100, styles: 40, active: 60, regionBytes: 999}
 	tape := preparedContentCost{definitions: 90, styles: 45, active: 50, regionBytes: 1}

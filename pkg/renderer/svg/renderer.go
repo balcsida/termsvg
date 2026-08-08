@@ -938,7 +938,7 @@ func (c *canvas) writeBand(band *preparedBand) {
 			c.writeSMILVerticalTranslate(c.w, band.offsets)
 		} else {
 			fmt.Fprintf(c.w, `<g style="animation:%s %s %s step-end%s">`,
-				band.name, animationDuration(c.plan.duration), c.loopCount(), c.finiteAnimationFill())
+				band.name, animationDuration(c.plan.duration), c.loopCount(), c.scrollFiniteAnimationFill())
 		}
 		c.writeFrameRows(band.tapeRows)
 		fmt.Fprint(c.w, `</g></svg>`)
@@ -960,15 +960,15 @@ func (c *canvas) writeBand(band *preparedBand) {
 		fmt.Fprint(c.w, `<g>`)
 		c.writeSMILTranslate(c.w, band.keyframes, width)
 	} else {
-		fmt.Fprintf(c.w, `<g style="animation:%s %s %s step-end">`,
-			band.name, animationDuration(c.plan.duration), c.loopCount())
+		fmt.Fprintf(c.w, `<g style="animation:%s %s %s step-end%s">`,
+			band.name, animationDuration(c.plan.duration), c.loopCount(), c.scrollFiniteAnimationFill())
 	}
 	c.writeStateStrip(band.rows, width)
 	fmt.Fprint(c.w, `</g></svg>`)
 }
 
-func (c *canvas) finiteAnimationFill() string {
-	if infiniteLoop(c.config.LoopCount) {
+func (c *canvas) scrollFiniteAnimationFill() string {
+	if c.options.Layout != LayoutScroll || infiniteLoop(c.config.LoopCount) {
 		return ""
 	}
 	return " forwards"
@@ -1113,7 +1113,8 @@ func (c *canvas) writeCursor() {
 		point.state = frames[0].state
 	}
 	if len(frames) > 1 && c.options.Animation == AnimationCSS {
-		style = fmt.Sprintf(` style="animation:cursor %s %s step-end"`, animationDuration(c.plan.duration), c.loopCount())
+		style = fmt.Sprintf(` style="animation:cursor %s %s step-end%s"`,
+			animationDuration(c.plan.duration), c.loopCount(), c.scrollFiniteAnimationFill())
 	}
 	fmt.Fprintf(c.w, `<g transform="translate(%s,%s)" visibility="%s"%s>`,
 		c.xmlInt(point.state.Col*ColWidth), c.xmlInt(point.state.Row*RowHeight), cursorVisibility(point.state), style)
