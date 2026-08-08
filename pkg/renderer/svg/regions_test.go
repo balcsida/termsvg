@@ -98,6 +98,46 @@ func TestOptimizeDynamicRegionsUsesExactBackendProfitability(t *testing.T) {
 	}
 }
 
+func TestRegionMergeDecisionsMatchFullSerializationOracle(t *testing.T) {
+	plan := renderPlan{duration: time.Second, width: 12, height: 1, content: timeline[[]ir.Row]{
+		duration: time.Second,
+		points: []timelinePoint[[]ir.Row]{
+			{state: []ir.Row{{Y: 0, Runs: []ir.TextRun{{Text: "a", StartCol: 1, EndCol: 2}, {Text: "b", StartCol: 5, EndCol: 6}, {Text: "c", StartCol: 9, EndCol: 10}}}}},
+			{time: time.Second, state: []ir.Row{{Y: 0, Runs: []ir.TextRun{{Text: "A", StartCol: 1, EndCol: 2}, {Text: "B", StartCol: 5, EndCol: 6}, {Text: "C", StartCol: 9, EndCol: 10}}}}},
+		},
+	}}
+	for _, minify := range []bool{false, true} {
+		for _, options := range []Options{
+			{Layout: LayoutRegions, Animation: AnimationCSS, FrameSwitch: FrameSwitchTranslate},
+			{Layout: LayoutRegions, Animation: AnimationSMIL, FrameSwitch: FrameSwitchTranslate},
+			{Layout: LayoutRegions, Animation: AnimationSMIL, FrameSwitch: FrameSwitchHref},
+		} {
+			config := renderer.DefaultConfig()
+			config.Minify = minify
+			c := canvas{rec: parityRecording(12, 1, nil), plan: plan, config: *config, options: options,
+				classNames: testCatalog().GenerateClassNames(), metrics: &CandidateMetrics{}}
+			c.rec.Colors = testCatalog()
+			regions := buildDynamicRegions(&plan, c.rec.Colors)
+			additive, err := c.optimizeDynamicRegions(context.Background(), regions)
+			if err != nil {
+				t.Fatal(err)
+			}
+			oracle, err := optimizeRegionMergesWithBudget(regions, regionCandidateEvaluationBudget,
+				func(candidate []dynamicRegion) (int64, error) {
+					return c.serializedRegionBytes(context.Background(), candidate)
+				}, func(candidate []dynamicRegion, i, j int) []dynamicRegion {
+					return mergeDynamicRegions(&plan, candidate, i, j, c.rec.Colors)
+				})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(additive, oracle) {
+				t.Fatalf("minify=%v options=%+v additive=%#v oracle=%#v", minify, options, additive, oracle)
+			}
+		}
+	}
+}
+
 func TestRegionCostRepresentationExcludesUnrelatedSVG(t *testing.T) {
 	rec := experimentalRecording()
 	config := renderer.DefaultConfig()

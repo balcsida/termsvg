@@ -3,6 +3,7 @@ package svg
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"math"
 	"math/rand"
@@ -18,44 +19,42 @@ func TestCandidateCostMatchesSerialization(t *testing.T) {
 		"small":        createTestRecording,
 		"experimental": experimentalRecording,
 	}
+	configs := []struct {
+		name                   string
+		minify, window, cursor bool
+		loops                  int
+	}{
+		{name: "raw-borderless-no-cursor-infinite", loops: 0},
+		{name: "minified-window-cursor-finite", minify: true, window: true, cursor: true, loops: 3},
+		{name: "raw-window-cursor-no-loop", window: true, cursor: true, loops: -1},
+		{name: "minified-borderless-cursor-infinite", minify: true, cursor: true, loops: 0},
+	}
+	validModes := []struct {
+		animation AnimationMode
+		switcher  FrameSwitchMode
+	}{
+		{AnimationCSS, FrameSwitchTranslate},
+		{AnimationSMIL, FrameSwitchTranslate},
+		{AnimationSMIL, FrameSwitchHref},
+	}
 	for name, load := range recordings {
 		rec := load()
-		for _, minify := range []bool{false, true} {
-			for _, window := range []bool{false, true} {
-				for _, cursor := range []bool{false, true} {
-					config := renderer.DefaultConfig()
-					config.Minify, config.ShowWindow, config.ShowCursor = minify, window, cursor
-					for _, options := range []Options{
-						{Layout: LayoutFrames, Animation: AnimationCSS, FrameSwitch: FrameSwitchTranslate},
-						{Layout: LayoutBands, Animation: AnimationCSS, FrameSwitch: FrameSwitchHref},
-						{Layout: LayoutBands, Animation: AnimationSMIL, FrameSwitch: FrameSwitchTranslate},
-						{Layout: LayoutRegions, Animation: AnimationSMIL, FrameSwitch: FrameSwitchHref},
-					} {
-						t.Run(name, func(t *testing.T) {
-							plan, err := buildSemanticPlan(context.Background(), rec, cursor, options.MaxFPS, config.LoopCount)
-							if err != nil {
-								t.Fatal(err)
-							}
-							candidate, err := prepareCandidate(context.Background(), rec, &plan, config, options)
-							if err != nil {
-								t.Fatal(err)
-							}
-							got, err := costPreparedCandidate(context.Background(), rec, config, candidate)
-							if err != nil {
-								t.Fatal(err)
-							}
-							var out bytes.Buffer
-							r := &Renderer{config: *config}
-							if err := writeFinalSVG(&out, minify, func(w io.Writer) error { return r.serializeCandidate(context.Background(), rec, w, candidate) }); err != nil {
-								t.Fatal(err)
-							}
-							if got != int64(out.Len()) {
-								t.Fatalf("cost = %d, serialization = %d", got, out.Len())
-							}
-						})
+		for _, testConfig := range configs {
+			t.Run(name+"/"+testConfig.name, func(t *testing.T) {
+				config := renderer.DefaultConfig()
+				config.Minify, config.ShowWindow, config.ShowCursor, config.LoopCount =
+					testConfig.minify, testConfig.window, testConfig.cursor, testConfig.loops
+				for _, layout := range []LayoutMode{LayoutFrames, LayoutBands, LayoutRegions} {
+					for _, mode := range validModes {
+						for _, fps := range []int{0, 30} {
+							options := Options{Layout: layout, Animation: mode.animation, FrameSwitch: mode.switcher, MaxFPS: fps}
+							t.Run(fmt.Sprintf("%s-%s-%s-%dfps", layout, mode.animation, mode.switcher, fps), func(t *testing.T) {
+								assertCandidateCostExact(t, rec, config, options)
+							})
+						}
 					}
 				}
-			}
+			})
 		}
 	}
 }
@@ -81,24 +80,28 @@ func TestCandidateCostMatchesRandomizedRecordings(t *testing.T) {
 }
 
 func TestCandidateCostMatchesRealCasts(t *testing.T) {
+	modes := []Options{
+		{Layout: LayoutFrames, Animation: AnimationCSS, FrameSwitch: FrameSwitchTranslate},
+		{Layout: LayoutBands, Animation: AnimationSMIL, FrameSwitch: FrameSwitchHref},
+		{Layout: LayoutRegions, Animation: AnimationSMIL, FrameSwitch: FrameSwitchTranslate},
+		{Layout: LayoutFrames, Animation: AnimationSMIL, FrameSwitch: FrameSwitchHref},
+		{Layout: LayoutRegions, Animation: AnimationCSS, FrameSwitch: FrameSwitchTranslate},
+	}
 	for i, name := range []string{"256colors.cast", "444816.cast", "htop.cast", "session.cast", "rgb.cast"} {
 		rec := loadRegionCast(t, name)
 		config := renderer.DefaultConfig()
 		config.Minify = i%2 == 0
 		config.ShowWindow = i%3 != 0
 		config.ShowCursor = i%2 != 0
-		options := DefaultOptions()
-		options.Layout = LayoutFrames
-		if i%2 != 0 {
-			options.Animation = AnimationSMIL
-			options.MaxFPS = 30
-		}
-		assertCandidateCostExact(t, rec, config, options)
+		assertCandidateCostExact(t, rec, config, modes[i])
 	}
 }
 
 func assertCandidateCostExact(t *testing.T, rec *ir.Recording, config *renderer.Config, options Options) {
 	t.Helper()
+	if err := options.Validate(); err != nil {
+		t.Fatal(err)
+	}
 	plan, err := buildSemanticPlan(context.Background(), rec, config.ShowCursor, options.MaxFPS, config.LoopCount)
 	if err != nil {
 		t.Fatal(err)
