@@ -641,21 +641,29 @@ func (c *canvas) rowDefinition(row *renderedRow, id string) string {
 }
 
 func addElementID(svg, id string) string {
+	prefix := elementIDPrefix(svg)
+	if prefix == "" {
+		return `<g id="` + id + `">` + svg + `</g>`
+	}
+	return prefix + ` id="` + id + `"` + strings.TrimPrefix(svg, prefix)
+}
+
+func elementIDPrefix(svg string) string {
 	end := strings.IndexByte(svg, '>')
 	if end < 0 {
-		return `<g id="` + id + `">` + svg + `</g>`
+		return ""
 	}
 	start := svg[:end+1]
 	for _, name := range []string{"rect", "text", "use"} {
 		prefix := "<" + name
 		if strings.HasPrefix(start, prefix) && (len(start) == len(prefix)+1 || start[len(prefix)] == ' ' || start[len(prefix)] == '/') {
 			if strings.Contains(start, ` id="`) {
-				return `<g id="` + id + `">` + svg + `</g>`
+				return ""
 			}
-			return prefix + ` id="` + id + `"` + strings.TrimPrefix(svg, prefix)
+			return prefix
 		}
 	}
-	return `<g id="` + id + `">` + svg + `</g>`
+	return ""
 }
 
 func (c *canvas) rowElementCount(row ir.Row) int {
@@ -733,8 +741,7 @@ func (c *canvas) writeStateDefs(content *preparedContent) {
 }
 
 func (c *canvas) writeStateDefinition(id string, rows []*renderedRow) {
-	children := c.stateElementCount(rows)
-	if children == 1 {
+	if !c.stateNeedsWrapper(rows) {
 		var body strings.Builder
 		writer := c.w
 		c.w = &body
@@ -743,13 +750,28 @@ func (c *canvas) writeStateDefinition(id string, rows []*renderedRow) {
 		fmt.Fprint(c.w, addElementID(body.String(), id))
 		return
 	}
-	if children == 0 && c.config.Minify {
+	if c.stateElementCount(rows) == 0 && c.config.Minify {
 		fmt.Fprintf(c.w, `<g id="%s"/>`, id)
 		return
 	}
 	fmt.Fprintf(c.w, `<g id="%s">`, id)
 	c.writeFrameRows(rows)
 	fmt.Fprint(c.w, `</g>`)
+}
+
+func (c *canvas) stateNeedsWrapper(rows []*renderedRow) bool {
+	if c.stateElementCount(rows) != 1 {
+		return true
+	}
+	for _, row := range rows {
+		if row.id != "" {
+			return false
+		}
+		if c.rowElementCount(row.row) == 1 {
+			return elementIDPrefix(row.svg) == ""
+		}
+	}
+	return true
 }
 
 func (c *canvas) stateElementCount(rows []*renderedRow) int {

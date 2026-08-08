@@ -103,7 +103,7 @@ func addStructuralMetrics(metrics *CandidateMetrics, c *canvas, content *prepare
 	}
 
 	for i := range content.frameStateIDs {
-		if c.stateElementCount(content.frameRows[i]) != 1 {
+		if c.stateNeedsWrapper(content.frameRows[i]) {
 			addMetric(metrics, true, "g", 1)
 		}
 		addStateRowsMetrics(metrics, c, true, content.frameRows[i:i+1])
@@ -111,7 +111,7 @@ func addStructuralMetrics(metrics *CandidateMetrics, c *canvas, content *prepare
 	for bandIndex := range content.bands {
 		band := &content.bands[bandIndex]
 		for i := range band.stateIDs {
-			if c.stateElementCount(band.rows[i]) != 1 {
+			if c.stateNeedsWrapper(band.rows[i]) {
 				addMetric(metrics, true, "g", 1)
 			}
 			addStateRowsMetrics(metrics, c, true, band.rows[i:i+1])
@@ -197,7 +197,7 @@ func addUseExpansionMetrics(metrics *CandidateMetrics, c *canvas, content *prepa
 	stateNode := func(rows []*renderedRow) definitionNode {
 		nodes, uses := rowUses(rows)
 		children := saturatingAdd(nodes, uint64(len(uses)))
-		return definitionNode{nodes: saturatingAdd(children, uint64(boolInt(children != 1))), uses: uses}
+		return definitionNode{nodes: saturatingAdd(children, uint64(boolInt(c.stateNeedsWrapper(rows)))), uses: uses}
 	}
 	for i, id := range content.frameStateIDs {
 		graph[id] = stateNode(content.frameRows[i])

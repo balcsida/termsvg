@@ -6,6 +6,7 @@ import (
 	"io"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/mrmarble/termsvg/pkg/ir"
 	"github.com/mrmarble/termsvg/pkg/renderer"
@@ -252,6 +253,31 @@ func TestPreparedMetricsMatchSerializedStructure(t *testing.T) {
 				t.Fatalf("prepared metrics = %#v; serialized = %#v", got, parsed)
 			}
 		})
+	}
+}
+
+func TestExistingChildIDRetainsWrapperInExactMetrics(t *testing.T) {
+	row := &renderedRow{row: ir.Row{Runs: []ir.TextRun{{Text: "x", EndCol: 1}}}, svg: `<text id="row">x</text>`}
+	content := preparedContent{
+		frameStateIDs:  []string{"state"},
+		frameRows:      [][]*renderedRow{{row}},
+		frameKeyframes: []keyframePoint[int]{{selector: "0%", state: 0}, {selector: "100%", state: 0}},
+	}
+	metrics := CandidateMetrics{}
+	c := canvas{
+		rec:     parityRecording(1, 1, nil),
+		plan:    renderPlan{duration: time.Second},
+		options: Options{Layout: LayoutFrames, Animation: AnimationSMIL, FrameSwitch: FrameSwitchHref},
+	}
+	if err := addStructuralMetrics(&metrics, &c, &content); err != nil {
+		t.Fatal(err)
+	}
+	if metrics.XMLNodes != 11 || metrics.DefinitionNodes != 5 || metrics.ActiveNodes != 6 ||
+		metrics.GroupNodes != 2 || metrics.SourceActiveNodes != 6 || metrics.SourceDefinitionNodes != 5 ||
+		metrics.InitialAnimatedUseShadowNodes != 2 || metrics.PeakAnimatedUseShadowNodes != 2 ||
+		metrics.PeakInstantiatedNodes != 13 || metrics.DurationWeightedInstantiatedNodeNanos != 13_000_000_000 ||
+		metrics.PeakLiveNodeEstimate != 8 || metrics.MaxUseDepth != 1 {
+		t.Fatalf("collision fallback metrics = %#v", metrics)
 	}
 }
 
