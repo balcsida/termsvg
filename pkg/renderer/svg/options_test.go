@@ -27,6 +27,17 @@ func TestRegionsLayoutValidates(t *testing.T) {
 	}
 }
 
+func TestScrollLayoutValidatesWithoutChangingDefault(t *testing.T) {
+	if DefaultOptions().Layout != LayoutFrames {
+		t.Fatalf("default layout = %q, want %q", DefaultOptions().Layout, LayoutFrames)
+	}
+	options := DefaultOptions()
+	options.Layout = LayoutScroll
+	if err := options.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
 func TestRendererOptionsValidation(t *testing.T) {
 	tests := []struct {
 		name    string

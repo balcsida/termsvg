@@ -253,7 +253,7 @@ func preparedScreenAt(
 	at time.Duration,
 ) semanticScreen {
 	rows := slices.Clone(plan.staticRows)
-	if options.Layout != LayoutBands && options.Layout != LayoutRegions {
+	if options.Layout != LayoutBands && options.Layout != LayoutRegions && options.Layout != LayoutScroll {
 		_, states := contentKeyframesFor(plan.content)
 		state := rowsStateIndex(states, timelineStateAt(plan.content, at))
 		if state >= 0 && state < len(content.frameRows) {
@@ -263,6 +263,23 @@ func preparedScreenAt(
 	}
 	for bandIndex := range content.bands {
 		band := &content.bands[bandIndex]
+		if band.kind == bandScrollTape {
+			_, states := contentKeyframesFor(band.content)
+			state := rowsStateIndex(states, timelineStateAt(band.content, at))
+			offset := 0
+			for i, frame := range band.keyframes {
+				if frame.state == state {
+					offset = band.offsets[i].state
+					break
+				}
+			}
+			for _, row := range renderedRows(band.tapeRows, band.x, band.y-offset) {
+				if row.Y >= band.y && row.Y < band.y+band.height {
+					rows = append(rows, row)
+				}
+			}
+			continue
+		}
 		_, states := contentKeyframesFor(band.content)
 		state := rowsStateIndex(states, timelineStateAt(band.content, at))
 		if state >= 0 && state < len(band.rows) {

@@ -21,6 +21,10 @@ func TestNormalizedSVGOptions(t *testing.T) {
 			want: svg.Options{Layout: svg.LayoutRegions, Animation: svg.AnimationCSS, FrameSwitch: svg.FrameSwitchTranslate, AutoObjective: svg.AutoObjectiveSize, Style: svg.StyleLegacy},
 		},
 		{
+			name: "scroll layout", cmd: Cmd{SVGLayout: "SCROLL"}, format: "svg",
+			want: svg.Options{Layout: svg.LayoutScroll, Animation: svg.AnimationCSS, FrameSwitch: svg.FrameSwitchTranslate, AutoObjective: svg.AutoObjectiveSize, Style: svg.StyleLegacy},
+		},
+		{
 			name:   "experimental options",
 			cmd:    Cmd{SVGLayout: "BANDS", SVGAnimation: "SMIL", SVGMaxFPS: 30},
 			format: "svg",

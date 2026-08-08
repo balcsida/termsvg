@@ -22,7 +22,20 @@ func (c *canvas) writeSMILTranslate(w io.Writer, frames []keyframePoint[int], wi
 	}
 	c.writeSMILAnimation(w, "animateTransform", []smilAttribute{
 		{name: "attributeName", value: "transform"},
-		{name: "type", value: "translate"},
+		{name: "type", value: string(FrameSwitchTranslate)},
+		{name: "values", value: strings.Join(values, ";")},
+		{name: "keyTimes", value: smilKeyTimes(frames)},
+	})
+}
+
+func (c *canvas) writeSMILVerticalTranslate(w io.Writer, frames []keyframePoint[int]) {
+	values := make([]string, len(frames))
+	for i, frame := range frames {
+		values[i] = "0 " + strconv.Itoa(-RowHeight*frame.state)
+	}
+	c.writeSMILAnimation(w, "animateTransform", []smilAttribute{
+		{name: "attributeName", value: "transform"},
+		{name: "type", value: string(FrameSwitchTranslate)},
 		{name: "values", value: strings.Join(values, ";")},
 		{name: "keyTimes", value: smilKeyTimes(frames)},
 	})

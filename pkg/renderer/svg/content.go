@@ -21,16 +21,29 @@ type preparedContent struct {
 }
 
 type preparedBand struct {
-	x         int
-	y         int
-	width     int
-	height    int
-	name      string
-	keyframes []keyframePoint[int]
-	rows      [][]*renderedRow
-	stateIDs  []string
-	content   timeline[[]ir.Row]
+	kind       preparedBandKind
+	x          int
+	y          int
+	width      int
+	height     int
+	name       string
+	keyframes  []keyframePoint[int]
+	rows       [][]*renderedRow
+	stateIDs   []string
+	content    timeline[[]ir.Row]
+	tapeRows   []*renderedRow
+	tapeRaw    []ir.Row
+	offsets    []keyframePoint[int]
+	direction  int
+	tapeHeight int
 }
+
+type preparedBandKind uint8
+
+const (
+	bandSnapshot preparedBandKind = iota
+	bandScrollTape
+)
 
 func (c *canvas) prepareContentContext(ctx context.Context) (preparedContent, error) {
 	if err := contextErr(ctx); err != nil {
@@ -41,6 +54,9 @@ func (c *canvas) prepareContentContext(ctx context.Context) (preparedContent, er
 	}
 	if c.options.Layout == LayoutRegions {
 		return c.prepareRegions(ctx)
+	}
+	if c.options.Layout == LayoutScroll {
+		return c.prepareScroll(ctx)
 	}
 	keyframes, states := c.contentKeyframes()
 	if err := contextErr(ctx); err != nil {
@@ -137,17 +153,44 @@ func (c *canvas) prepareBands(ctx context.Context) (preparedContent, error) {
 	return c.prepareLocalViewports(ctx, bands)
 }
 
+func (c *canvas) prepareScroll(ctx context.Context) (preparedContent, error) {
+	bands := buildRowBands(&c.plan, c.plan.width, c.plan.height)
+	prepared, err := c.prepareLocalViewports(ctx, bands)
+	if err != nil {
+		return preparedContent{}, err
+	}
+	for i, source := range bands {
+		tape, ok := detectUpwardScrollTape(source, c.rec.Colors)
+		if !ok {
+			continue
+		}
+		candidateBands := slices.Clone(prepared.bands)
+		candidateBands[i].kind = bandScrollTape
+		candidateBands[i].tapeRaw = tape.rows
+		candidateBands[i].offsets = tape.offsets
+		candidateBands[i].direction = 1
+		candidateBands[i].tapeHeight = len(tape.rows)
+		candidate, err := c.materializeBands(ctx, candidateBands)
+		if err != nil {
+			return preparedContent{}, err
+		}
+		if candidate.cost.regionBytes < prepared.cost.regionBytes {
+			prepared = candidate
+		}
+	}
+	return prepared, nil
+}
+
 func (c *canvas) prepareLocalViewports(ctx context.Context, bands []rowBand) (preparedContent, error) {
 	if err := contextErr(ctx); err != nil {
 		return preparedContent{}, err
 	}
 	prepared := preparedContent{bands: make([]preparedBand, len(bands))}
-	allStates := make([][]ir.Row, 0)
-	stateOffsets := make([]int, len(bands)+1)
 
 	for i, band := range bands {
-		keyframes, states := contentKeyframesFor(band.content)
+		keyframes, _ := contentKeyframesFor(band.content)
 		prepared.bands[i] = preparedBand{
+			kind:      bandSnapshot,
 			x:         band.x,
 			y:         band.y,
 			width:     band.width,
@@ -155,11 +198,22 @@ func (c *canvas) prepareLocalViewports(ctx context.Context, bands []rowBand) (pr
 			keyframes: keyframes,
 			content:   band.content,
 		}
-		stateOffsets[i] = len(allStates)
-		allStates = append(allStates, states...)
 	}
-	if err := contextErr(ctx); err != nil {
-		return preparedContent{}, err
+	return c.materializeBands(ctx, prepared.bands)
+}
+
+func (c *canvas) materializeBands(ctx context.Context, bands []preparedBand) (preparedContent, error) {
+	prepared := preparedContent{bands: slices.Clone(bands)}
+	allStates := make([][]ir.Row, 0)
+	stateOffsets := make([]int, len(bands)+1)
+	for i := range prepared.bands {
+		stateOffsets[i] = len(allStates)
+		if prepared.bands[i].kind == bandScrollTape {
+			allStates = append(allStates, prepared.bands[i].tapeRaw)
+			continue
+		}
+		_, states := contentKeyframesFor(prepared.bands[i].content)
+		allStates = append(allStates, states...)
 	}
 	stateOffsets[len(bands)] = len(allStates)
 
@@ -169,7 +223,14 @@ func (c *canvas) prepareLocalViewports(ctx context.Context, bands []rowBand) (pr
 	}
 	prepared.rowDefs = defs
 	for i := range prepared.bands {
-		prepared.bands[i].rows = frames[stateOffsets[i]:stateOffsets[i+1]]
+		band := &prepared.bands[i]
+		if band.kind == bandScrollTape {
+			band.rows = nil
+			band.tapeRows = frames[stateOffsets[i]]
+			band.stateIDs = nil
+			continue
+		}
+		band.rows = frames[stateOffsets[i]:stateOffsets[i+1]]
 		if c.options.FrameSwitch == FrameSwitchHref && len(prepared.bands[i].keyframes) > 1 {
 			prepared.bands[i].stateIDs = stateIDs("_b"+strconv.Itoa(i)+"_", len(prepared.bands[i].rows))
 		}
@@ -177,10 +238,14 @@ func (c *canvas) prepareLocalViewports(ctx context.Context, bands []rowBand) (pr
 
 	names := make(map[string]string)
 	for i := range prepared.bands {
-		if len(prepared.bands[i].keyframes) <= 1 {
+		frames := prepared.bands[i].keyframes
+		if prepared.bands[i].kind == bandScrollTape {
+			frames = prepared.bands[i].offsets
+		}
+		if len(frames) <= 1 {
 			continue
 		}
-		signature := keyframeSignature(prepared.bands[i].keyframes, prepared.bands[i].width)
+		signature := strconv.Itoa(int(prepared.bands[i].kind)) + "|" + keyframeSignature(frames, prepared.bands[i].width)
 		name, ok := names[signature]
 		if !ok {
 			name = "b" + strconv.Itoa(len(names))

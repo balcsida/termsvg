@@ -535,7 +535,11 @@ func (c *canvas) writeStyles(content *preparedContent) {
 				if band.name == "" || written[band.name] {
 					continue
 				}
-				sb.WriteString(c.generateBandKeyframes(band.name, band.keyframes, band.width*ColWidth))
+				if band.kind == bandScrollTape {
+					sb.WriteString(c.generateScrollKeyframes(band.name, band.offsets))
+				} else {
+					sb.WriteString(c.generateBandKeyframes(band.name, band.keyframes, band.width*ColWidth))
+				}
 				written[band.name] = true
 			}
 		} else if len(content.frameKeyframes) > 1 {
@@ -928,6 +932,18 @@ func (c *canvas) writeBand(band *preparedBand) {
 	}
 	fmt.Fprintf(c.w, `<svg%s%s width="%s" height="%s" overflow="hidden">`,
 		xAttr, yAttr, c.xmlInt(width), c.xmlInt(height))
+	if band.kind == bandScrollTape {
+		if c.options.Animation == AnimationSMIL {
+			fmt.Fprint(c.w, `<g>`)
+			c.writeSMILVerticalTranslate(c.w, band.offsets)
+		} else {
+			fmt.Fprintf(c.w, `<g style="animation:%s %s %s step-end">`,
+				band.name, animationDuration(c.plan.duration), c.loopCount())
+		}
+		c.writeFrameRows(band.tapeRows)
+		fmt.Fprint(c.w, `</g></svg>`)
+		return
+	}
 	if len(band.keyframes) <= 1 {
 		if len(band.rows) > 0 {
 			c.writeFrameRows(band.rows[len(band.rows)-1])
@@ -981,6 +997,16 @@ func (c *canvas) generateBandKeyframes(name string, frames []keyframePoint[int],
 	fmt.Fprintf(&sb, "@keyframes %s{", name)
 	for _, frame := range frames {
 		fmt.Fprintf(&sb, "%s{transform:translateX(%dpx)}", frame.selector, -width*frame.state)
+	}
+	sb.WriteString("}")
+	return sb.String()
+}
+
+func (c *canvas) generateScrollKeyframes(name string, frames []keyframePoint[int]) string {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "@keyframes %s{", name)
+	for _, frame := range frames {
+		fmt.Fprintf(&sb, "%s{transform:translateY(%dpx)}", frame.selector, -RowHeight*frame.state)
 	}
 	sb.WriteString("}")
 	return sb.String()

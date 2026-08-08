@@ -32,6 +32,11 @@ type CandidateMetrics struct {
 	MaxViewportWidth                      int
 	MaxViewportHeight                     int
 	MaxViewportArea                       int64
+	ScrollTapeCount                       int
+	MaxTapeWidth                          int
+	MaxTapeHeight                         int
+	MaxTapeArea                           int64
+	ScrollTransformAnimations             int
 	SourceActiveNodes                     int
 	SourceDefinitionNodes                 int
 	StaticUseShadowNodes                  uint64
@@ -57,6 +62,14 @@ func addPreparedMetrics(
 		metrics.MaxViewportWidth = max(metrics.MaxViewportWidth, band.width*ColWidth)
 		metrics.MaxViewportHeight = max(metrics.MaxViewportHeight, band.height*RowHeight)
 		metrics.MaxViewportArea = max(metrics.MaxViewportArea, int64(band.width*ColWidth)*int64(band.height*RowHeight))
+		if band.kind == bandScrollTape {
+			metrics.ScrollTapeCount++
+			metrics.MaxTapeWidth = max(metrics.MaxTapeWidth, band.width*ColWidth)
+			metrics.MaxTapeHeight = max(metrics.MaxTapeHeight, band.tapeHeight*RowHeight)
+			metrics.MaxTapeArea = max(metrics.MaxTapeArea, int64(band.width*ColWidth)*int64(band.tapeHeight*RowHeight))
+			metrics.ScrollTransformAnimations++
+			continue
+		}
 		if options.FrameSwitch == FrameSwitchTranslate && len(band.keyframes) > 1 {
 			addTranslatedSurface(metrics, band.width*ColWidth, band.height*RowHeight, len(band.rows))
 		}
@@ -437,6 +450,15 @@ func addLocalViewportMetrics(metrics *CandidateMetrics, c *canvas, content *prep
 	for i := range content.bands {
 		band := &content.bands[i]
 		addMetric(metrics, false, "svg", 1)
+		if band.kind == bandScrollTape {
+			addMetric(metrics, false, "g", 1)
+			if c.options.Animation == AnimationSMIL {
+				addMetric(metrics, false, "animation", 1)
+			}
+			addStateRowsMetrics(metrics, c, false, [][]*renderedRow{band.tapeRows})
+			animations++
+			continue
+		}
 		if len(band.keyframes) <= 1 {
 			addStateRowsMetrics(metrics, c, false, band.rows)
 			continue

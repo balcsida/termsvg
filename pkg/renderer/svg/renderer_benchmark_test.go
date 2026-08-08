@@ -74,6 +74,60 @@ func BenchmarkRegionWorkloads(b *testing.B) {
 	}
 }
 
+func BenchmarkScrollTape(b *testing.B) {
+	fixtures := map[string]*ir.Recording{"synthetic-120x40": scrollRecording(120, 40, 21)}
+	for _, name := range []string{"htop.cast", "session.cast"} {
+		path := filepath.Join("..", "..", "..", "examples", name)
+		f, err := os.Open(path) //nolint:gosec // repository benchmark fixture
+		if err != nil {
+			continue
+		}
+		cast, parseErr := asciicast.Parse(f)
+		closeErr := f.Close()
+		if parseErr != nil {
+			b.Fatal(parseErr)
+		}
+		if closeErr != nil {
+			b.Fatal(closeErr)
+		}
+		rec, err := ir.NewProcessor(ir.DefaultProcessorConfig()).Process(cast)
+		if err != nil {
+			b.Fatal(err)
+		}
+		fixtures[strings.TrimSuffix(name, ".cast")] = rec
+	}
+	for name, rec := range fixtures {
+		for _, layout := range []LayoutMode{LayoutBands, LayoutScroll} {
+			b.Run(name+"/"+string(layout), func(b *testing.B) {
+				benchmarkScrollCandidate(b, rec, WithLayout(layout))
+			})
+		}
+	}
+}
+
+func benchmarkScrollCandidate(b *testing.B, rec *ir.Recording, options ...Option) {
+	b.Helper()
+	r := New(renderer.DefaultConfig(), options...)
+	metrics, err := r.MeasureCandidate(context.Background(), rec)
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		if _, err := r.MeasureCandidate(context.Background(), rec); err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.ReportMetric(float64(metrics.FinalBytes), "raw-bytes")
+	b.ReportMetric(float64(metrics.XMLNodes), "xml-nodes")
+	b.ReportMetric(float64(metrics.DefinitionNodes), "definitions")
+	b.ReportMetric(float64(metrics.AnimatedElements), "animated-elements")
+	b.ReportMetric(float64(metrics.LocalViewportCount), "viewports")
+	b.ReportMetric(float64(metrics.MaxTapeArea), "tape-area")
+	b.ReportMetric(float64(metrics.MaxTranslatedArea), "translated-area")
+}
+
 func BenchmarkAutoSelection(b *testing.B) {
 	rec := staticFrames(200)
 	config := renderer.DefaultConfig()

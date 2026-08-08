@@ -36,7 +36,7 @@ type Cmd struct {
 	Rows             int           `short:"r" default:"0" help:"Override rows (0 = use original)"`
 	Debug            bool          `short:"d" help:"Enable debug logging"`
 	Theme            string        `short:"t" help:"Theme name (built-in) or path to theme JSON file"`
-	SVGLayout        string        `default:"frames" enum:"frames,bands,regions,auto" help:"SVG layout: frames, experimental bands/regions, or measured auto selection"`
+	SVGLayout        string        `default:"frames" enum:"frames,bands,regions,scroll,auto" help:"SVG layout: frames, experimental bands/regions/scroll, or measured auto selection"`
 	SVGAnimation     string        `default:"css" enum:"css,smil" help:"SVG animation backend (css or experimental smil)"`
 	SVGFrameSwitch   string        `default:"translate" enum:"translate,href" help:"SVG state switching: translated strips or experimental animated hrefs"`
 	SVGAutoObjective string        `default:"size" enum:"size,runtime" help:"SVG auto layout objective: size or structural runtime proxies"`

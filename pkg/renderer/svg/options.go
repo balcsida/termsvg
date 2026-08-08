@@ -43,6 +43,9 @@ const (
 	LayoutBands LayoutMode = "bands"
 	// LayoutRegions builds independently animated two-dimensional viewports.
 	LayoutRegions LayoutMode = "regions"
+	// LayoutScroll converts strictly proven upward-scrolling bands to clipped
+	// vertical tapes and leaves every other band on the lossless snapshot path.
+	LayoutScroll LayoutMode = "scroll"
 	// LayoutAuto measures the concrete frame and band serializations and emits
 	// the smaller one. It is opt-in because it performs an extra render pass.
 	LayoutAuto LayoutMode = "auto"
@@ -65,7 +68,7 @@ const (
 )
 
 func (o Options) usesLocalViewports() bool {
-	return o.Layout == LayoutBands || o.Layout == LayoutRegions
+	return o.Layout == LayoutBands || o.Layout == LayoutRegions || o.Layout == LayoutScroll
 }
 
 // DefaultOptions returns the compatibility-preserving SVG defaults.
@@ -132,7 +135,7 @@ func (o Options) normalized() Options {
 func (o Options) Validate() error {
 	o = o.normalized()
 	switch o.Layout {
-	case LayoutFrames, LayoutBands, LayoutRegions, LayoutAuto:
+	case LayoutFrames, LayoutBands, LayoutRegions, LayoutScroll, LayoutAuto:
 	default:
 		return fmt.Errorf("unsupported SVG layout %q", o.Layout)
 	}
