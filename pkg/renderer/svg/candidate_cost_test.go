@@ -199,3 +199,36 @@ func TestUseExpansionMetricsValues(t *testing.T) {
 		t.Fatalf("use metrics = %#v", metrics)
 	}
 }
+
+func TestUseExpansionMetricsCountRetainedStateWrappers(t *testing.T) {
+	inline := func(text string) *renderedRow {
+		return &renderedRow{row: ir.Row{Runs: []ir.TextRun{{Text: text, EndCol: 1}}}}
+	}
+	rowDef := inline("r")
+	rowDef.id = "r"
+	states := [][]*renderedRow{{inline("a"), inline("b")}, {inline("c"), rowDef}}
+	keyframes := []keyframePoint[int]{{selector: "0%", state: 0}, {selector: "50%", state: 1}}
+
+	for _, layout := range []LayoutMode{LayoutFrames, LayoutBands, LayoutRegions} {
+		t.Run(string(layout), func(t *testing.T) {
+			content := preparedContent{rowDefs: []*renderedRow{rowDef}}
+			if layout == LayoutFrames {
+				content.frameStateIDs, content.frameRows, content.frameKeyframes = []string{"s0", "s1"}, states, keyframes
+			} else {
+				content.bands = []preparedBand{{stateIDs: []string{"s0", "s1"}, rows: states, keyframes: keyframes}}
+			}
+			metrics := CandidateMetrics{XMLNodes: 10, ActiveNodes: 4, DefinitionNodes: 6}
+			c := canvas{rec: parityRecording(2, 1, nil), plan: renderPlan{duration: time.Second}, options: Options{Layout: layout, FrameSwitch: FrameSwitchHref}}
+			if err := addUseExpansionMetrics(&metrics, &c, &content); err != nil {
+				t.Fatal(err)
+			}
+			if metrics.SourceActiveNodes != 4 || metrics.SourceDefinitionNodes != 6 ||
+				metrics.StaticUseShadowNodes != 1 || metrics.InitialAnimatedUseShadowNodes != 3 ||
+				metrics.PeakAnimatedUseShadowNodes != 4 || metrics.PeakInstantiatedNodes != 15 ||
+				metrics.DurationWeightedInstantiatedNodeNanos != 14_500_000_000 ||
+				metrics.PeakLiveNodeEstimate != 8 || metrics.MaxUseDepth != 2 {
+				t.Fatalf("%s use metrics = %#v", layout, metrics)
+			}
+		})
+	}
+}

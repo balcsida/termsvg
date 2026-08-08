@@ -75,6 +75,8 @@ func TestWriteStateDefinitionElidesOnlyOneGeneratedChild(t *testing.T) {
 		{name: "rect", rows: []*renderedRow{{row: ir.Row{Runs: []ir.TextRun{{Text: "x"}}}, svg: `<rect y="0" width="12"/>`}}, want: `<rect id="_f0" y="0" width="12"/>`},
 		{name: "multiple", rows: []*renderedRow{{row: ir.Row{Runs: []ir.TextRun{{Text: "x"}}}, svg: `<text>x</text>`}, {row: ir.Row{Runs: []ir.TextRun{{Text: "y"}}}, svg: `<text>y</text>`}}, want: `<g id="_f0"><text>x</text><text>y</text></g>`},
 		{name: "row use", rows: []*renderedRow{{id: "a"}}, want: `<use id="_f0" href="#a"/>`},
+		{name: "existing child id", rows: []*renderedRow{{row: ir.Row{Runs: []ir.TextRun{{Text: "x"}}}, svg: `<text id="row">x</text>`}}, want: `<g id="_f0"><text id="row">x</text></g>`},
+		{name: "existing child id minified", minify: true, rows: []*renderedRow{{row: ir.Row{Runs: []ir.TextRun{{Text: "x"}}}, svg: `<text id="row">x</text>`}}, want: `<g id="_f0"><text id="row">x</text></g>`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -85,6 +87,16 @@ func TestWriteStateDefinitionElidesOnlyOneGeneratedChild(t *testing.T) {
 				t.Fatalf("state definition = %q; want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestSingleChildStateElisionSavesExactBytes(t *testing.T) {
+	const before = `<g id="_f0"><text y="20">x</text></g>`
+	var out strings.Builder
+	canvas := canvas{w: &out, rec: createTestRecording()}
+	canvas.writeStateDefinition("_f0", []*renderedRow{{row: ir.Row{Runs: []ir.TextRun{{Text: "x"}}}, svg: `<text y="20">x</text>`}})
+	if delta := len(before) - out.Len(); delta != 7 {
+		t.Fatalf("single-child state byte delta = %d; want 7", delta)
 	}
 }
 

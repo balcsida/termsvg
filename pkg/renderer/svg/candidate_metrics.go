@@ -194,14 +194,17 @@ func addUseExpansionMetrics(metrics *CandidateMetrics, c *canvas, content *prepa
 		}
 		return
 	}
+	stateNode := func(rows []*renderedRow) definitionNode {
+		nodes, uses := rowUses(rows)
+		children := saturatingAdd(nodes, uint64(len(uses)))
+		return definitionNode{nodes: saturatingAdd(children, uint64(boolInt(children != 1))), uses: uses}
+	}
 	for i, id := range content.frameStateIDs {
-		nodes, uses := rowUses(content.frameRows[i])
-		graph[id] = definitionNode{nodes: max(nodes, 1), uses: uses}
+		graph[id] = stateNode(content.frameRows[i])
 	}
 	for bi := range content.bands {
 		for i, id := range content.bands[bi].stateIDs {
-			nodes, uses := rowUses(content.bands[bi].rows[i])
-			graph[id] = definitionNode{nodes: max(nodes, 1), uses: uses}
+			graph[id] = stateNode(content.bands[bi].rows[i])
 		}
 	}
 	costs := make(map[string]uint64, len(graph))
