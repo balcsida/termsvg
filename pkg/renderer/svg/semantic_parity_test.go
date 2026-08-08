@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"reflect"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -139,6 +140,17 @@ func TestRegionSemanticParityLoopAndContentStateEdges(t *testing.T) {
 				assertSemanticParityWithConfig(t, rec, config, WithLayout(LayoutRegions))
 			})
 		}
+	}
+}
+
+func TestEffectiveTimesSamplesTransitionBoundaries(t *testing.T) {
+	rec := parityRecording(1, 1, [][]ir.Row{
+		{parityRow(0, parityRun("a", 0, ir.CellAttrs{}))},
+		{parityRow(0, parityRun("b", 0, ir.CellAttrs{}))},
+	})
+	want := []time.Duration{0, 1, time.Second - 1, time.Second, time.Second + 1, 2 * time.Second}
+	if got := effectiveTimes(rec); !reflect.DeepEqual(got, want) {
+		t.Fatalf("effective times = %v; want %v", got, want)
 	}
 }
 
@@ -318,15 +330,21 @@ func timelineStateAt[T any](timeline timeline[T], at time.Duration) T {
 }
 
 func effectiveTimes(rec *ir.Recording) []time.Duration {
-	times := make([]time.Duration, 0, len(rec.Frames)+1)
+	seen := map[time.Duration]bool{0: true, rec.Duration: true}
 	for _, frame := range rec.Frames {
-		if len(times) == 0 || times[len(times)-1] != frame.Time {
-			times = append(times, frame.Time)
+		seen[frame.Time] = true
+		if frame.Time > 0 {
+			seen[frame.Time-1] = true
+		}
+		if frame.Time < rec.Duration {
+			seen[frame.Time+1] = true
 		}
 	}
-	if len(times) == 0 || times[len(times)-1] != rec.Duration {
-		times = append(times, rec.Duration)
+	times := make([]time.Duration, 0, len(seen))
+	for at := range seen {
+		times = append(times, at)
 	}
+	sort.Slice(times, func(i, j int) bool { return times[i] < times[j] })
 	return times
 }
 

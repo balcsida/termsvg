@@ -7,6 +7,7 @@ import (
 	"slices"
 	"sort"
 	"strconv"
+	"time"
 
 	"github.com/mrmarble/termsvg/pkg/color"
 	"github.com/mrmarble/termsvg/pkg/ir"
@@ -29,6 +30,11 @@ type regionMeasurement struct {
 type regionMergePair struct {
 	i int
 	j int
+}
+
+type temporalSchedule struct {
+	hash  uint64
+	times []time.Duration
 }
 
 const regionCandidateEvaluationBudget = 512
@@ -77,32 +83,84 @@ func dynamicRegionsForRow(
 		}}
 	}
 
-	dynamic := make([]bool, plan.width)
-	for col := range plan.width {
-		for state := 1; state < len(grids); state++ {
-			if !visualCellsEqual(&grids[0].rows[y], col, &grids[state].rows[y], col) {
-				dynamic[col] = true
-				break
-			}
-		}
-	}
 	regions := make([]dynamicRegion, 0)
-	for start := 0; start < len(dynamic); {
-		if !dynamic[start] {
-			start++
+	atoms := visualAtoms(grids, y, plan.width)
+	for index := 0; index < len(atoms); {
+		schedule := atomSchedule(plan, grids, y, atoms[index][0], atoms[index][1])
+		if len(schedule.times) == 0 {
+			index++
 			continue
 		}
-		end := start + 1
-		for end < len(dynamic) && dynamic[end] {
-			end++
+		start, end := atoms[index][0], atoms[index][1]
+		index++
+		for index < len(atoms) {
+			next := atomSchedule(plan, grids, y, atoms[index][0], atoms[index][1])
+			if !schedule.equal(next) {
+				break
+			}
+			end = atoms[index][1]
+			index++
 		}
 		candidate := cropRegionFromGrids(plan, grids, start, y, end-start, 1)
 		if len(candidate.content.points) > 1 {
 			regions = append(regions, candidate)
 		}
-		start = end
 	}
 	return regions
+}
+
+func visualAtoms(grids []visualGrid, y, width int) [][2]int {
+	joined := make([]bool, width)
+	for i := range grids {
+		for _, glyph := range grids[i].rows[y].glyphs {
+			for col := glyph.startCol + 1; col < glyph.startCol+glyph.width; col++ {
+				joined[col] = true
+			}
+		}
+	}
+	atoms := make([][2]int, 0, width)
+	for start := 0; start < width; {
+		end := start + 1
+		for end < width && joined[end] {
+			end++
+		}
+		atoms = append(atoms, [2]int{start, end})
+		start = end
+	}
+	return atoms
+}
+
+func atomSchedule(plan *renderPlan, grids []visualGrid, y, start, end int) temporalSchedule {
+	var schedule temporalSchedule
+	for state := 1; state < len(grids); state++ {
+		if !visualAtomEqual(&grids[state-1].rows[y], &grids[state].rows[y], start, end) {
+			schedule.times = append(schedule.times, plan.content.points[state].time)
+		}
+	}
+	if len(schedule.times) == 0 {
+		return schedule
+	}
+	h := fnv.New64a()
+	var value [20]byte
+	for _, at := range schedule.times {
+		_, _ = h.Write(strconv.AppendInt(value[:0], int64(at), 10))
+		_, _ = h.Write([]byte{0})
+	}
+	schedule.hash = h.Sum64()
+	return schedule
+}
+
+func visualAtomEqual(a, b *visualRow, start, end int) bool {
+	for col := start; col < end; col++ {
+		if !visualCellsEqual(a, col, b, col) {
+			return false
+		}
+	}
+	return true
+}
+
+func (a temporalSchedule) equal(b temporalSchedule) bool {
+	return a.hash == b.hash && slices.Equal(a.times, b.times)
 }
 
 func (c *canvas) optimizeDynamicRegions(ctx context.Context, regions []dynamicRegion) ([]dynamicRegion, error) {
@@ -115,15 +173,69 @@ func (c *canvas) optimizeDynamicRegionsWithBudget(
 	evaluationBudget int,
 ) ([]dynamicRegion, error) {
 	grids := visualGridsForPlan(&c.plan, c.rec.Colors)
-	return optimizeRegionMergesWithBudget(regions, evaluationBudget, func(candidate []dynamicRegion) (int64, error) {
+	measure := func(candidate []dynamicRegion) (int64, error) {
 		content, err := c.prepareLocalViewports(ctx, c.regionBands(candidate))
 		if err != nil {
 			return 0, err
 		}
 		return costPreparedContent(ctx, c, &content)
-	}, func(candidate []dynamicRegion, i, j int) []dynamicRegion {
+	}
+	if evaluationBudget > 0 && len(mergeableRegionPairs(regions)) > evaluationBudget {
+		spatial := spatialDynamicRegions(&c.plan, grids)
+		temporalBytes, err := measure(regions)
+		if err != nil {
+			return nil, err
+		}
+		spatialBytes, err := measure(spatial)
+		if err != nil {
+			return nil, err
+		}
+		if spatialBytes < temporalBytes {
+			regions = spatial
+		}
+	}
+	return optimizeRegionMergesWithBudget(regions, evaluationBudget, measure, func(candidate []dynamicRegion, i, j int) []dynamicRegion {
 		return mergeDynamicRegionsFromGrids(&c.plan, grids, candidate, i, j)
 	})
+}
+
+func spatialDynamicRegions(plan *renderPlan, grids []visualGrid) []dynamicRegion {
+	regions := make([]dynamicRegion, 0)
+	for y := range plan.height {
+		supported := true
+		for i := range grids {
+			supported = supported && grids[i].rows[y].supported
+		}
+		if !supported {
+			regions = append(regions, dynamicRegionsForRow(plan, grids, y)...)
+			continue
+		}
+		dynamic := make([]bool, plan.width)
+		for col := range plan.width {
+			for state := 1; state < len(grids); state++ {
+				if !visualCellsEqual(&grids[0].rows[y], col, &grids[state].rows[y], col) {
+					dynamic[col] = true
+					break
+				}
+			}
+		}
+		for start := 0; start < len(dynamic); {
+			if !dynamic[start] {
+				start++
+				continue
+			}
+			end := start + 1
+			for end < len(dynamic) && dynamic[end] {
+				end++
+			}
+			candidate := cropRegionFromGrids(plan, grids, start, y, end-start, 1)
+			if len(candidate.content.points) > 1 {
+				regions = append(regions, candidate)
+			}
+			start = end
+		}
+	}
+	return regions
 }
 
 func optimizeRegionMerges(
@@ -261,9 +373,11 @@ func dynamicRegionsMergeable(a, b *dynamicRegion) bool {
 	if len(a.fallbackRows) > 0 || len(b.fallbackRows) > 0 {
 		return false
 	}
-	adjacent := a.y+a.height == b.y || b.y+b.height == a.y
-	touching := a.x <= b.x+b.width && b.x <= a.x+a.width
-	return adjacent && touching
+	vertical := (a.y+a.height == b.y || b.y+b.height == a.y) &&
+		a.x <= b.x+b.width && b.x <= a.x+a.width
+	horizontal := (a.x+a.width == b.x || b.x+b.width == a.x) &&
+		a.y <= b.y+b.height && b.y <= a.y+a.height
+	return vertical || horizontal
 }
 
 func mergeDynamicRegions(

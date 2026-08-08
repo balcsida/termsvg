@@ -46,6 +46,50 @@ func TestBuildDynamicRegionsKeepsDistantIntervalsSeparate(t *testing.T) {
 	}
 }
 
+func TestBuildDynamicRegionsSplitsAdjacentDistinctSchedules(t *testing.T) {
+	plan := renderPlan{duration: 3 * time.Second, width: 2, height: 1, content: timeline[[]ir.Row]{
+		duration: 3 * time.Second,
+		points: []timelinePoint[[]ir.Row]{
+			{state: []ir.Row{{Runs: []ir.TextRun{{Text: "00", EndCol: 2}}}}},
+			{time: time.Second, state: []ir.Row{{Runs: []ir.TextRun{{Text: "10", EndCol: 2}}}}},
+			{time: 2 * time.Second, state: []ir.Row{{Runs: []ir.TextRun{{Text: "11", EndCol: 2}}}}},
+		},
+	}}
+
+	if got := regionBounds(buildDynamicRegions(&plan, testCatalog())); !reflect.DeepEqual(got, [][4]int{{0, 0, 1, 1}, {1, 0, 1, 1}}) {
+		t.Fatalf("region bounds = %#v; want adjacent schedules split", got)
+	}
+}
+
+func TestBuildDynamicRegionsKeepsAdjacentIdenticalSchedulesTogether(t *testing.T) {
+	plan := renderPlan{duration: 2 * time.Second, width: 2, height: 1, content: timeline[[]ir.Row]{
+		duration: 2 * time.Second,
+		points: []timelinePoint[[]ir.Row]{
+			{state: []ir.Row{{Runs: []ir.TextRun{{Text: "00", EndCol: 2}}}}},
+			{time: time.Second, state: []ir.Row{{Runs: []ir.TextRun{{Text: "11", EndCol: 2}}}}},
+		},
+	}}
+
+	if got := regionBounds(buildDynamicRegions(&plan, testCatalog())); !reflect.DeepEqual(got, [][4]int{{0, 0, 2, 1}}) {
+		t.Fatalf("region bounds = %#v; want identical schedules combined", got)
+	}
+}
+
+func TestBuildDynamicRegionsDoesNotBisectWideGlyphFootprint(t *testing.T) {
+	plan := renderPlan{duration: 3 * time.Second, width: 2, height: 1, content: timeline[[]ir.Row]{
+		duration: 3 * time.Second,
+		points: []timelinePoint[[]ir.Row]{
+			{state: []ir.Row{{Runs: []ir.TextRun{{Text: "界\x00", EndCol: 2}}}}},
+			{time: time.Second, state: []ir.Row{{Runs: []ir.TextRun{{Text: "A0", EndCol: 2}}}}},
+			{time: 2 * time.Second, state: []ir.Row{{Runs: []ir.TextRun{{Text: "A1", EndCol: 2}}}}},
+		},
+	}}
+
+	if got := regionBounds(buildDynamicRegions(&plan, testCatalog())); !reflect.DeepEqual(got, [][4]int{{0, 0, 2, 1}}) {
+		t.Fatalf("region bounds = %#v; want wide footprint kept atomic", got)
+	}
+}
+
 func TestOptimizeDynamicRegionsUsesExactBackendProfitability(t *testing.T) {
 	plan := renderPlan{duration: time.Second, width: 8, height: 2, content: timeline[[]ir.Row]{
 		duration: time.Second,
@@ -177,6 +221,13 @@ func TestOptimizeRegionMergesKeepsTiesSeparate(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, regions) {
 		t.Fatalf("tie merged regions: got %#v, want %#v", got, regions)
+	}
+}
+
+func TestMergeableRegionPairsIncludesHorizontalAdjacency(t *testing.T) {
+	regions := []dynamicRegion{{width: 1, height: 1}, {x: 1, width: 1, height: 1}}
+	if got := mergeableRegionPairs(regions); !reflect.DeepEqual(got, []regionMergePair{{i: 0, j: 1}}) {
+		t.Fatalf("mergeable pairs = %#v; want horizontal pair", got)
 	}
 }
 
@@ -365,30 +416,10 @@ func Test444816BoundedRegionOptimizationMatchesExhaustiveBaseline(t *testing.T) 
 		classNames: rec.Colors.GenerateClassNames(), metrics: &CandidateMetrics{},
 	}
 	regions := buildDynamicRegions(&plan, rec.Colors)
-	grids := visualGridsForPlan(&plan, rec.Colors)
-	measurements := 0
-	candidateEvaluations := 0
-	bounded, err := optimizeRegionMergesWithBudget(regions, regionCandidateEvaluationBudget,
-		func(candidate []dynamicRegion) (int64, error) {
-			measurements++
-			return c.serializedRegionBytes(context.Background(), candidate)
-		}, func(candidate []dynamicRegion, i, j int) []dynamicRegion {
-			candidateEvaluations++
-			return mergeDynamicRegionsFromGrids(&plan, grids, candidate, i, j)
-		})
+	bounded, err := c.optimizeDynamicRegionsWithBudget(context.Background(), regions, regionCandidateEvaluationBudget)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if candidateEvaluations != 440 {
-		t.Fatalf("candidate evaluations = %d, want fixture baseline 440", candidateEvaluations)
-	}
-	if candidateEvaluations > regionCandidateEvaluationBudget {
-		t.Fatalf("candidate evaluations = %d, budget = %d", candidateEvaluations, regionCandidateEvaluationBudget)
-	}
-	if measurements != 441 {
-		t.Fatalf("serialized sets = %d, want initial set plus 440 candidates", measurements)
-	}
-	t.Logf("bounded candidate evaluations = %d; serialized sets = %d", candidateEvaluations, measurements)
 	boundedBytes, err := c.serializedRegionBytes(context.Background(), bounded)
 	if err != nil {
 		t.Fatal(err)

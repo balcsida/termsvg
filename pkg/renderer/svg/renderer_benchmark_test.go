@@ -303,14 +303,11 @@ func regionBenchmarkRecordings() map[string]*ir.Recording {
 			{parityRow(20, parityRun("1", 60, ir.CellAttrs{}))},
 		}),
 		"120x40_four_distant_counters": parityRecording(120, 40, [][]ir.Row{
-			{
-				parityRow(5, parityRun("0", 5, ir.CellAttrs{}), parityRun("0", 110, ir.CellAttrs{})),
-				parityRow(35, parityRun("0", 5, ir.CellAttrs{}), parityRun("0", 110, ir.CellAttrs{})),
-			},
-			{
-				parityRow(5, parityRun("1", 5, ir.CellAttrs{}), parityRun("1", 110, ir.CellAttrs{})),
-				parityRow(35, parityRun("1", 5, ir.CellAttrs{}), parityRun("1", 110, ir.CellAttrs{})),
-			},
+			{parityRow(5, parityRun("0", 5, ir.CellAttrs{}), parityRun("0", 110, ir.CellAttrs{})), parityRow(35, parityRun("0", 5, ir.CellAttrs{}), parityRun("0", 110, ir.CellAttrs{}))},
+			{parityRow(5, parityRun("1", 5, ir.CellAttrs{}), parityRun("0", 110, ir.CellAttrs{})), parityRow(35, parityRun("0", 5, ir.CellAttrs{}), parityRun("0", 110, ir.CellAttrs{}))},
+			{parityRow(5, parityRun("1", 5, ir.CellAttrs{}), parityRun("1", 110, ir.CellAttrs{})), parityRow(35, parityRun("0", 5, ir.CellAttrs{}), parityRun("0", 110, ir.CellAttrs{}))},
+			{parityRow(5, parityRun("1", 5, ir.CellAttrs{}), parityRun("1", 110, ir.CellAttrs{})), parityRow(35, parityRun("1", 5, ir.CellAttrs{}), parityRun("0", 110, ir.CellAttrs{}))},
+			{parityRow(5, parityRun("1", 5, ir.CellAttrs{}), parityRun("1", 110, ir.CellAttrs{})), parityRow(35, parityRun("1", 5, ir.CellAttrs{}), parityRun("1", 110, ir.CellAttrs{}))},
 		}),
 		"progress_monitor":   fixtures["adjacent-progress-bars"],
 		"scrolling_table":    fixtures["scrolling-table"],
