@@ -171,9 +171,9 @@ func TestViewportAreaUsesLargestEmittedViewport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if metrics.MaxViewportArea >= int64(metrics.MaxViewportWidth*metrics.MaxViewportHeight) {
-		t.Fatalf("maximum viewport area = %d; separate maxima product = %d", metrics.MaxViewportArea,
-			metrics.MaxViewportWidth*metrics.MaxViewportHeight)
+	if metrics.MaxViewportWidth != 132 || metrics.MaxViewportHeight != 250 || metrics.MaxViewportArea != 9000 {
+		t.Fatalf("viewport maxima = %dx%d, area %d; want 132x250, area 9000",
+			metrics.MaxViewportWidth, metrics.MaxViewportHeight, metrics.MaxViewportArea)
 	}
 }
 
