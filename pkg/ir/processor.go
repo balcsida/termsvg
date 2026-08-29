@@ -258,8 +258,8 @@ func (p *Processor) preprocessEvents(cast *asciicast.Cast) []asciicast.Event {
 		}
 	}
 
-	// ponytail: O(n²) preserves legacy float64 rounding; replace only with a
-	// bit-exact linear algorithm if large idle-capped casts become slow.
+	// Keep the legacy O(n²) update order to preserve exact float64 rounding.
+	// Replace it only with a bit-exact linear algorithm if large casts become slow.
 	if p.config.IdleTimeLimit > 0 {
 		limit := p.config.IdleTimeLimit.Seconds()
 		prev := 0.0

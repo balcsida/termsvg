@@ -313,7 +313,8 @@ func prepareStyleCandidate(
 	}
 
 	style := c.buildStylePlan(scheme, paintOccurrences{texts: map[textStyleKey]int{}, backgrounds: map[color.ID]int{}})
-	// ponytail: four concrete recomputations cover naming/interning feedback; unstable opt-in schemes fall back to legacy.
+	// Bound the naming/interning fixed-point search to four passes. Schemes that
+	// do not stabilize are skipped so another stable candidate can win.
 	for range 4 {
 		c.style = style
 		content, err := c.prepareContentContext(ctx)
