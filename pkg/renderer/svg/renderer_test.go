@@ -529,6 +529,7 @@ func TestRender_HoistsTextWhitespaceAndEscapesTextNodes(t *testing.T) {
 			{Y: 0, Runs: []ir.TextRun{{Text: "  static  ", StartCol: 2, Attrs: ir.CellAttrs{Underline: true}}}},
 			{Y: 1, Runs: []ir.TextRun{{Text: "  " + strings.Repeat("repeated middle ", 8), StartCol: 3}}},
 			{Y: 2, Runs: []ir.TextRun{{Text: `<safe>&"'`, StartCol: 5}}},
+			{Y: 4, Runs: []ir.TextRun{{Text: "distinct final state"}}},
 		}},
 	}
 	rec.Duration = 2 * time.Second
@@ -873,7 +874,7 @@ func TestRender_ReusesProfitableRows(t *testing.T) {
 	rec.Frames = []ir.Frame{
 		{Time: 0, Rows: []ir.Row{row}},
 		{Time: 500 * time.Millisecond, Rows: []ir.Row{{Y: 0, Runs: []ir.TextRun{{Text: "different"}}}}},
-		{Time: time.Second, Rows: []ir.Row{row}},
+		{Time: time.Second, Rows: []ir.Row{row, {Y: 1, Runs: []ir.TextRun{{Text: "distinct final state"}}}}},
 	}
 	rec.Duration = time.Second
 

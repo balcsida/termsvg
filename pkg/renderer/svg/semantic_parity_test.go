@@ -254,8 +254,7 @@ func preparedScreenAt(
 ) semanticScreen {
 	rows := slices.Clone(plan.staticRows)
 	if options.Layout != LayoutBands && options.Layout != LayoutRegions && options.Layout != LayoutScroll {
-		_, states := contentKeyframesFor(plan.content)
-		state := rowsStateIndex(states, timelineStateAt(plan.content, at))
+		state := selectedContentStateAt(content.frameKeyframes, plan.content, at)
 		if state >= 0 && state < len(content.frameRows) {
 			rows = append(rows, renderedRows(content.frameRows[state], 0, 0)...)
 		}
@@ -280,13 +279,27 @@ func preparedScreenAt(
 			}
 			continue
 		}
-		_, states := contentKeyframesFor(band.content)
-		state := rowsStateIndex(states, timelineStateAt(band.content, at))
+		state := selectedContentStateAt(band.keyframes, band.content, at)
 		if state >= 0 && state < len(band.rows) {
 			rows = append(rows, renderedRows(band.rows[state], band.x, band.y)...)
 		}
 	}
 	return screenFromRows(rec, rows, 0, 0)
+}
+
+// Read the selected representation's playback slot; expected pixels still come
+// from the original recording and semantic timeline in assertSemanticParity.
+func selectedContentStateAt(frames []keyframePoint[int], source timeline[[]ir.Row], at time.Duration) int {
+	if len(frames) == 0 {
+		return 0
+	}
+	transition := 0
+	for i := 1; i < len(source.points) && source.points[i].time <= at; i++ {
+		if !rowsEqual(source.points[i-1].state, source.points[i].state) {
+			transition++
+		}
+	}
+	return frames[min(transition, len(frames)-1)].state
 }
 
 func assertNoRegionPaintOverlap(t *testing.T, rec *ir.Recording, regions []dynamicRegion) {

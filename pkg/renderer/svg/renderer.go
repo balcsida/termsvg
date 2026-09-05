@@ -29,14 +29,15 @@ type Renderer struct {
 
 // canvas holds rendering state
 type canvas struct {
-	w          io.Writer
-	rec        *ir.Recording
-	plan       renderPlan
-	config     renderer.Config
-	options    Options
-	classNames map[color.ID]string
-	style      stylePlan
-	metrics    *CandidateMetrics
+	reuseContentStates bool
+	w                  io.Writer
+	rec                *ir.Recording
+	plan               renderPlan
+	config             renderer.Config
+	options            Options
+	classNames         map[color.ID]string
+	style              stylePlan
+	metrics            *CandidateMetrics
 }
 
 type renderedRow struct {
@@ -633,7 +634,7 @@ func (c *canvas) generateKeyframes(frames []keyframePoint[int]) string {
 }
 
 func (c *canvas) contentKeyframes() ([]keyframePoint[int], [][]ir.Row) {
-	return contentKeyframesFor(c.plan.content)
+	return c.contentKeyframesFor(c.plan.content)
 }
 
 func (c *canvas) collectRows(contentStates [][]ir.Row) (frames [][]*renderedRow, defs []*renderedRow) {

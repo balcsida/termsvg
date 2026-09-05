@@ -48,6 +48,44 @@ const (
 )
 
 func (c *canvas) prepareContentContext(ctx context.Context) (preparedContent, error) {
+	baseline, err := c.prepareContentRepresentation(ctx)
+	if err != nil {
+		return baseline, err
+	}
+	probe := *c
+	probe.reuseContentStates = true
+	var reused preparedContent
+	if c.options.usesLocalViewports() {
+		// ponytail: reuse the chosen partition; rerun region search only if its
+		// additional byte savings justify the measured preparation cost.
+		bands := slices.Clone(baseline.bands)
+		recurring := false
+		for i := range bands {
+			if bands[i].kind == bandScrollTape {
+				continue
+			}
+			keyframes, states := probe.contentKeyframesFor(bands[i].content)
+			recurring = recurring || len(states) < len(bands[i].rows)
+			bands[i].keyframes = keyframes
+		}
+		if !recurring {
+			return baseline, nil
+		}
+		reused, err = probe.materializeBands(ctx, bands)
+	} else {
+		_, states := probe.contentKeyframesFor(c.plan.content)
+		if len(states) == len(baseline.frameRows) {
+			return baseline, nil
+		}
+		reused, err = probe.prepareContentRepresentation(ctx)
+	}
+	if err != nil {
+		return preparedContent{}, err
+	}
+	return strictSmallestPrepared(baseline, reused), nil
+}
+
+func (c *canvas) prepareContentRepresentation(ctx context.Context) (preparedContent, error) {
 	if err := contextErr(ctx); err != nil {
 		return preparedContent{}, err
 	}
@@ -244,7 +282,7 @@ func (c *canvas) prepareLocalViewports(ctx context.Context, bands []rowBand) (pr
 	prepared := preparedContent{bands: make([]preparedBand, len(bands))}
 
 	for i, band := range bands {
-		keyframes, _ := contentKeyframesFor(band.content)
+		keyframes, _ := c.contentKeyframesFor(band.content)
 		prepared.bands[i] = preparedBand{
 			kind:      bandSnapshot,
 			x:         band.x,
@@ -268,7 +306,7 @@ func (c *canvas) prepareLocalViewports(ctx context.Context, bands []rowBand) (pr
 		candidateBands[i].kind = bandRetainedRect
 		candidateBands[i].track = &track
 		candidateBands[i].content = stripped
-		candidateBands[i].keyframes, _ = contentKeyframesFor(stripped)
+		candidateBands[i].keyframes, _ = c.contentKeyframesFor(stripped)
 		candidate, err := c.materializeBands(ctx, candidateBands)
 		if err != nil {
 			return preparedContent{}, err
@@ -290,7 +328,7 @@ func (c *canvas) materializeBands(ctx context.Context, bands []preparedBand) (pr
 			allStates = append(allStates, prepared.bands[i].tapeRaw)
 			continue
 		}
-		_, states := contentKeyframesFor(prepared.bands[i].content)
+		_, states := c.contentKeyframesFor(prepared.bands[i].content)
 		allStates = append(allStates, states...)
 	}
 	stateOffsets[len(bands)] = len(allStates)
@@ -349,6 +387,52 @@ func contentKeyframesFor(content timeline[[]ir.Row]) ([]keyframePoint[int], [][]
 		states = append(states, content.points[len(content.points)-1].state)
 	}
 	return out, states
+}
+
+func (c *canvas) contentKeyframesFor(content timeline[[]ir.Row]) ([]keyframePoint[int], [][]ir.Row) {
+	frames, states := contentKeyframesFor(content)
+	if !c.reuseContentStates {
+		return frames, states
+	}
+	mapping, unique := recurringStateIndices(states, semanticStateHash)
+	if len(unique) == len(states) {
+		return frames, states
+	}
+	for i := range frames {
+		frames[i].state = mapping[frames[i].state]
+	}
+	return frames, unique
+}
+
+func recurringStateIndices(states [][]ir.Row, hash func([]ir.Row) uint64) ([]int, [][]ir.Row) {
+	buckets := make(map[uint64][]int, len(states))
+	mapping := make([]int, len(states))
+	unique := make([][]ir.Row, 0, len(states))
+	for i, state := range states {
+		key := hash(state)
+		index := -1
+		for _, candidate := range buckets[key] {
+			if rowsEqual(unique[candidate], state) {
+				index = candidate
+				break
+			}
+		}
+		if index < 0 {
+			index = len(unique)
+			unique = append(unique, state)
+			buckets[key] = append(buckets[key], index)
+		}
+		mapping[i] = index
+	}
+	return mapping, unique
+}
+
+func semanticStateHash(rows []ir.Row) uint64 {
+	h := uint64(14695981039346656037)
+	for _, row := range rows {
+		h = (h ^ semanticRowHash(row)) * 1099511628211
+	}
+	return h
 }
 
 func keyframeSignature(frames []keyframePoint[int], width int) string {
