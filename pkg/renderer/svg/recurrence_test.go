@@ -137,12 +137,7 @@ func TestRecurringContentKeepsCheapestCompleteRepresentation(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				probe := c
-				probe.reuseContentStates = true
-				reused, err := probe.prepareContentRepresentation(context.Background())
-				if err != nil {
-					t.Fatal(err)
-				}
+				reused := expectedReusedContent(t, &c, &baseline)
 				got, err := c.prepareContentContext(context.Background())
 				if err != nil {
 					t.Fatal(err)
@@ -159,6 +154,29 @@ func TestRecurringContentKeepsCheapestCompleteRepresentation(t *testing.T) {
 			}
 		}
 	}
+}
+
+func expectedReusedContent(t *testing.T, c *canvas, baseline *preparedContent) preparedContent {
+	t.Helper()
+	probe := *c
+	probe.reuseContentStates = true
+	var reused preparedContent
+	var err error
+	if c.options.usesLocalViewports() {
+		bands := slices.Clone(baseline.bands)
+		for i := range bands {
+			if bands[i].kind != bandScrollTape {
+				bands[i].keyframes, _ = probe.contentKeyframesFor(bands[i].content)
+			}
+		}
+		reused, err = probe.materializeBands(context.Background(), bands)
+	} else {
+		reused, err = probe.prepareContentRepresentation(context.Background())
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return reused
 }
 
 func assertRecurringPartitionPreserved(t *testing.T, baseline, got *preparedContent) {
