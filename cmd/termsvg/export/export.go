@@ -38,8 +38,8 @@ type Cmd struct {
 	Theme            string        `short:"t" help:"Theme name (built-in) or path to theme JSON file"`
 	SVGLayout        string        `default:"frames" enum:"frames,bands,regions,scroll,auto" help:"SVG layout: frames, experimental bands/regions/scroll, or measured auto selection"`
 	SVGAnimation     string        `default:"css" enum:"css,smil" help:"SVG animation backend (css or experimental smil)"`
-	SVGFrameSwitch   string        `default:"translate" enum:"translate,href" help:"SVG state switching: translated strips or experimental animated hrefs"`
-	SVGAutoObjective string        `default:"size" enum:"size,runtime" help:"SVG auto layout objective: size or structural runtime proxies"`
+	SVGFrameSwitch   string        `default:"translate" enum:"translate,href,auto" help:"SVG state switching: translate, experimental href, or measured auto (href/auto require SMIL)"`
+	SVGAutoObjective string        `default:"size" enum:"size,runtime" help:"SVG auto selection objective: size or structural runtime proxies"`
 	SVGStyle         string        `default:"legacy" enum:"legacy,auto" help:"SVG paint encoding: compatibility legacy or measured auto selection"`
 	SVGPrimitives    string        `default:"snapshots" enum:"snapshots,rect-tracks" help:"SVG primitives: snapshots or experimental retained background rectangles"`
 	SVGMaxFPS        int           `default:"0" help:"Maximum SVG timeline FPS; 0 preserves every state"`

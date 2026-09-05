@@ -125,12 +125,19 @@ Available options:
 - `--svg-style=legacy|auto` - Keep compatibility paint classes (default) or opt into exact, profitability-driven paint encoding
 - `--svg-primitives=snapshots|rect-tracks` - Keep snapshots (default) or retain strictly identified, byte-profitable background rectangles; tracks require SMIL with `regions` or `scroll`
 - `--svg-animation=css|smil` - Select CSS keyframes or the experimental discrete SMIL backend
-- `--svg-frame-switch=translate|href` - Select translated strips or experimental SMIL `href` switching
+- `--svg-frame-switch=translate|href|auto` - Keep translated strips (default), select animated hrefs, or compare both; `href` and `auto` require SMIL
 - `--svg-max-fps=<fps>` - Opt into lossy SVG timeline sampling; `0` preserves every state
 
 The SVG defaults remain `frames`, `css`, `translate`, `0`, `size`, `legacy`, and `snapshots`, so existing exports keep their
 lossless compatibility path. SVG-specific non-default options are rejected for
 GIF and WebM exports.
+
+Layout auto compares frames, bands, regions, and scroll when playback endpoints
+remain equivalent (finite CSS excludes scroll). Switching auto compares only the
+requested layout unless layout is also auto. Concrete settings remain fixed.
+Size selects the smallest final uncompressed output; runtime uses a deterministic
+structural estimate, not measured browser performance. Ties retain the earlier
+layout preference (frames, bands, regions, scroll), then translation over href.
 
 `--svg-style=auto` may inherit the default foreground on the clipped content
 group. This keeps window decoration and resources outside the inheritance

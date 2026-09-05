@@ -165,36 +165,47 @@ func (r *Renderer) prepareSelectedCandidate(
 	rec *ir.Recording,
 	plan *semanticPlan,
 ) (*preparedCandidate, error) {
-	if r.options.Layout != LayoutAuto {
+	if r.options.Layout != LayoutAuto && r.options.FrameSwitch != FrameSwitchAuto {
 		return prepareCandidate(ctx, rec, plan, &r.config, r.options)
 	}
-	options := r.options
-	options.Layout = LayoutFrames
-	frames, err := prepareCandidate(ctx, rec, plan, &r.config, options)
-	if err != nil {
-		return nil, err
+	layouts := []LayoutMode{r.options.Layout}
+	if r.options.Layout == LayoutAuto {
+		layouts = []LayoutMode{LayoutFrames, LayoutBands, LayoutRegions}
+		// Finite CSS scroll freezes its final state; compatibility layouts reset.
+		// SMIL freezes every layout, so its finite endpoints remain compatible.
+		if r.options.Animation == AnimationSMIL || infiniteLoop(r.config.LoopCount) {
+			layouts = append(layouts, LayoutScroll)
+		}
 	}
-	if err := r.measureCandidate(ctx, rec, frames); err != nil {
-		return nil, err
+	switches := []FrameSwitchMode{r.options.FrameSwitch}
+	if r.options.FrameSwitch == FrameSwitchAuto {
+		switches = []FrameSwitchMode{FrameSwitchTranslate, FrameSwitchHref}
 	}
-	options.Layout = LayoutBands
-	bands, err := prepareCandidate(ctx, rec, plan, &r.config, options)
-	if err != nil {
-		return nil, err
+	var selected *preparedCandidate
+	var candidates []*preparedCandidate
+	for _, layout := range layouts {
+		for _, frameSwitch := range switches {
+			options := r.options
+			options.Layout, options.FrameSwitch = layout, frameSwitch
+			candidate, err := prepareCandidate(ctx, rec, plan, &r.config, options)
+			if err != nil {
+				return nil, err
+			}
+			if err := r.measureCandidate(ctx, rec, candidate); err != nil {
+				return nil, err
+			}
+			if selected == nil {
+				selected = candidate
+			} else {
+				selected = selectPreparedCandidate(r.options.AutoObjective, selected, candidate)
+			}
+			if r.config.Debug {
+				// Keep only diagnostic fields, so losing content can be reclaimed.
+				candidates = append(candidates, &preparedCandidate{options: options, metrics: candidate.metrics})
+			}
+		}
 	}
-	if err := r.measureCandidate(ctx, rec, bands); err != nil {
-		return nil, err
-	}
-	options.Layout = LayoutRegions
-	regions, err := prepareCandidate(ctx, rec, plan, &r.config, options)
-	if err != nil {
-		return nil, err
-	}
-	if err := r.measureCandidate(ctx, rec, regions); err != nil {
-		return nil, err
-	}
-	selected := selectPreparedCandidate(r.options.AutoObjective, frames, bands, regions)
-	r.logAutoCandidates(selected, frames, bands, regions)
+	r.logAutoCandidates(selected, candidates...)
 	return selected, nil
 }
 
@@ -242,13 +253,14 @@ func (r *Renderer) logAutoCandidates(selected *preparedCandidate, candidates ...
 	}
 	for _, candidate := range candidates {
 		metrics := candidate.metrics
-		log.Printf("[SVG] auto candidate layout=%s bytes=%d source_nodes=%d definition_nodes=%d "+
+		log.Printf("[SVG] auto candidate layout=%s switching=%s bytes=%d source_nodes=%d definition_nodes=%d "+
 			"peak_instantiated_nodes=%d animation_nodes=%d viewport_count=%d viewport_area=%d translated_area=%d "+
-			"objective=%s selected=%s",
-			candidate.options.Layout, metrics.FinalBytes, metrics.SourceActiveNodes, metrics.SourceDefinitionNodes,
+			"objective=%s selected=%s selected_switching=%s",
+			candidate.options.Layout, candidate.options.FrameSwitch, metrics.FinalBytes,
+			metrics.SourceActiveNodes, metrics.SourceDefinitionNodes,
 			metrics.PeakInstantiatedNodes, metrics.AnimationNodes, metrics.LocalViewportCount, metrics.MaxViewportArea,
 			metrics.MaxTranslatedArea,
-			r.options.AutoObjective, selected.options.Layout)
+			r.options.AutoObjective, selected.options.Layout, selected.options.FrameSwitch)
 	}
 }
 

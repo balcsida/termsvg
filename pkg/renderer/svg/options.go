@@ -14,7 +14,7 @@ type AnimationMode string
 // FrameSwitchMode selects how discrete content states are activated.
 type FrameSwitchMode string
 
-// AutoObjective selects how auto layout candidates are compared.
+// AutoObjective selects how automatic layout or switching candidates are compared.
 type AutoObjective string
 
 // StyleMode selects the SVG paint encoding.
@@ -50,8 +50,8 @@ const (
 	// LayoutScroll converts strictly proven upward-scrolling bands to clipped
 	// vertical tapes and leaves every other band on the lossless snapshot path.
 	LayoutScroll LayoutMode = "scroll"
-	// LayoutAuto measures the concrete frame and band serializations and emits
-	// the smaller one. It is opt-in because it performs an extra render pass.
+	// LayoutAuto compares frames, bands, regions, and semantically eligible scroll
+	// candidates. It is opt-in because candidate preparation has an extra cost.
 	LayoutAuto LayoutMode = "auto"
 
 	// AnimationCSS emits CSS keyframes.
@@ -63,6 +63,8 @@ const (
 	FrameSwitchTranslate FrameSwitchMode = "translate"
 	// FrameSwitchHref animates one use element between state definitions.
 	FrameSwitchHref FrameSwitchMode = "href"
+	// FrameSwitchAuto compares translation and href under SMIL.
+	FrameSwitchAuto FrameSwitchMode = "auto"
 
 	AutoObjectiveSize    AutoObjective = "size"
 	AutoObjectiveRuntime AutoObjective = "runtime"
@@ -100,7 +102,7 @@ func WithAnimation(animation AnimationMode) Option {
 	return func(options *Options) { options.Animation = animation }
 }
 
-// WithFrameSwitch selects translated strips or experimental animated hrefs.
+// WithFrameSwitch selects translated strips, animated hrefs, or SMIL comparison.
 func WithFrameSwitch(frameSwitch FrameSwitchMode) Option {
 	return func(options *Options) { options.FrameSwitch = frameSwitch }
 }
@@ -110,7 +112,7 @@ func WithMaxFPS(maxFPS int) Option {
 	return func(options *Options) { options.MaxFPS = maxFPS }
 }
 
-// WithAutoObjective selects size or structural runtime proxy comparison for auto layout.
+// WithAutoObjective selects size or structural runtime proxy comparison for automatic layout or switching.
 func WithAutoObjective(objective AutoObjective) Option {
 	return func(options *Options) { options.AutoObjective = objective }
 }
@@ -161,7 +163,7 @@ func (o Options) Validate() error {
 		return fmt.Errorf("unsupported SVG animation mode %q", o.Animation)
 	}
 	switch o.FrameSwitch {
-	case FrameSwitchTranslate, FrameSwitchHref:
+	case FrameSwitchTranslate, FrameSwitchHref, FrameSwitchAuto:
 	default:
 		return fmt.Errorf("unsupported SVG frame switch mode %q", o.FrameSwitch)
 	}
@@ -186,11 +188,14 @@ func (o Options) Validate() error {
 	if o.Primitives == PrimitiveRectTracks && o.Layout != LayoutRegions && o.Layout != LayoutScroll {
 		return fmt.Errorf("SVG rectangle tracks require regions or scroll layout")
 	}
-	if o.AutoObjective != AutoObjectiveSize && o.Layout != LayoutAuto {
-		return fmt.Errorf("SVG auto objective %q requires auto layout", o.AutoObjective)
+	if o.AutoObjective != AutoObjectiveSize && o.Layout != LayoutAuto && o.FrameSwitch != FrameSwitchAuto {
+		return fmt.Errorf("SVG auto objective %q requires auto layout or frame switching", o.AutoObjective)
 	}
 	if o.FrameSwitch == FrameSwitchHref && o.Animation != AnimationSMIL {
 		return fmt.Errorf("SVG href frame switching requires SMIL animation")
+	}
+	if o.FrameSwitch == FrameSwitchAuto && o.Animation != AnimationSMIL {
+		return fmt.Errorf("SVG automatic frame switching requires SMIL animation")
 	}
 	if o.MaxFPS < 0 {
 		return fmt.Errorf("max SVG FPS must not be negative: %d", o.MaxFPS)
