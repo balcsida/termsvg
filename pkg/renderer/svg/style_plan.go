@@ -8,6 +8,7 @@ import (
 
 	"github.com/mrmarble/termsvg/pkg/color"
 	"github.com/mrmarble/termsvg/pkg/ir"
+	"github.com/tdewolff/minify/v2/css"
 )
 
 type styleScheme string
@@ -378,6 +379,11 @@ func (c *canvas) textDeclarations(key textStyleKey) (string, string) {
 
 func (c *canvas) paintHex(rgba stdcolor.RGBA) string {
 	hex := color.RGBAtoHex(rgba)
+	if c.config.Minify {
+		if name, ok := css.ShortenColorHex[strings.ToLower(hex)]; ok {
+			return string(name)
+		}
+	}
 	if c.config.Minify && hex[1] == hex[2] && hex[3] == hex[4] && hex[5] == hex[6] {
 		return "#" + string([]byte{hex[1], hex[3], hex[5]})
 	}
