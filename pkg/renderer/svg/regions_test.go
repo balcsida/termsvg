@@ -443,11 +443,9 @@ func assertBoundedRegionCostExact(
 }
 
 func Test444816BoundedRegionOptimizationMatchesExhaustiveBaseline(t *testing.T) {
-	// The pinned constants describe the serialization before segment, block
-	// and layer sharing changed every region's byte cost. The exhaustive
-	// baseline is being recomputed for the current renderer; until it is
-	// pinned again this comparison would only measure the old encoding.
-	t.Skip("exhaustive region baseline pending recomputation for the byte-exact sharing passes")
+	// The pinned constants are the unbounded greedy merge of the spatial
+	// fallback set (48 regions, 30 mergeable pairs), which converges after
+	// 442 candidate evaluations; the bounded run must reach the same result.
 	rec := loadRegionCast(t, "444816.cast")
 	config := renderer.DefaultConfig()
 	options := Options{Layout: LayoutRegions, Animation: AnimationCSS, FrameSwitch: FrameSwitchTranslate}
@@ -468,10 +466,10 @@ func Test444816BoundedRegionOptimizationMatchesExhaustiveBaseline(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(bounded) != 22 || boundedBytes != 1588853 {
-		t.Fatalf("bounded result = %d regions/%d bytes, want exhaustive 22/1588853", len(bounded), boundedBytes)
+	if len(bounded) != 21 || boundedBytes != 805421 {
+		t.Fatalf("bounded result = %d regions/%d bytes, want exhaustive 21/805421", len(bounded), boundedBytes)
 	}
-	const exhaustiveDigest = "7a39f7de73f8b537af69c6960e61b79c2035adbe2168de5cc3b19e73cf9b4cbd"
+	const exhaustiveDigest = "0485ad8f0174d8311450363c58bea2f57e58b2938d3ed5f25b1350e4fafaab1d"
 	if digest := regionOptimizationDigest(bounded, boundedBytes); digest != exhaustiveDigest {
 		t.Fatalf("bounded result digest = %s, want exhaustive %s", digest, exhaustiveDigest)
 	}
