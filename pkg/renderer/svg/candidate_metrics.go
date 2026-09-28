@@ -57,10 +57,10 @@ func addPreparedMetrics(
 	options Options,
 	contentWidth, contentHeight int,
 ) {
-	metrics.StateDefinitions = len(content.frameStateIDs)
+	metrics.StateDefinitions = ownedStateDefinitions(content.frameStateIDs, content.frameRows)
 	for i := range content.bands {
 		band := &content.bands[i]
-		metrics.StateDefinitions += len(band.stateIDs)
+		metrics.StateDefinitions += ownedStateDefinitions(band.stateIDs, band.rows)
 		metrics.LocalViewportCount++
 		metrics.MaxViewportWidth = max(metrics.MaxViewportWidth, band.width*ColWidth)
 		metrics.MaxViewportHeight = max(metrics.MaxViewportHeight, band.height*RowHeight)
@@ -91,6 +91,16 @@ func addPreparedMetrics(
 	if metrics.StateDefinitions > 0 {
 		metrics.MaxUseDepth++
 	}
+}
+
+func ownedStateDefinitions(ids []string, states [][]*renderedRow) int {
+	count := 0
+	for i := range ids {
+		if ownsStateDefinition(ids, states, i) {
+			count++
+		}
+	}
+	return count
 }
 
 func addTranslatedSurface(metrics *CandidateMetrics, width, height, states int) {
@@ -137,6 +147,9 @@ func addStructuralMetrics(metrics *CandidateMetrics, c *canvas, content *prepare
 	}
 
 	for i := range content.frameStateIDs {
+		if !ownsStateDefinition(content.frameStateIDs, content.frameRows, i) {
+			continue
+		}
 		if c.stateNeedsWrapper(content.frameRows[i]) {
 			addMetric(metrics, true, "g", 1)
 		}
@@ -145,6 +158,9 @@ func addStructuralMetrics(metrics *CandidateMetrics, c *canvas, content *prepare
 	for bandIndex := range content.bands {
 		band := &content.bands[bandIndex]
 		for i := range band.stateIDs {
+			if !ownsStateDefinition(band.stateIDs, band.rows, i) {
+				continue
+			}
 			if c.stateNeedsWrapper(band.rows[i]) {
 				addMetric(metrics, true, "g", 1)
 			}
@@ -239,11 +255,15 @@ func addUseExpansionMetrics(metrics *CandidateMetrics, c *canvas, content *prepa
 		return definitionNode{nodes: saturatingAdd(children, uint64(boolInt(c.stateNeedsWrapper(rows)))), uses: uses}
 	}
 	for i, id := range content.frameStateIDs {
-		graph[id] = stateNode(content.frameRows[i])
+		if ownsStateDefinition(content.frameStateIDs, content.frameRows, i) {
+			graph[id] = stateNode(content.frameRows[i])
+		}
 	}
 	for bi := range content.bands {
 		for i, id := range content.bands[bi].stateIDs {
-			graph[id] = stateNode(content.bands[bi].rows[i])
+			if ownsStateDefinition(content.bands[bi].stateIDs, content.bands[bi].rows, i) {
+				graph[id] = stateNode(content.bands[bi].rows[i])
+			}
 		}
 	}
 	costs := make(map[string]uint64, len(graph))

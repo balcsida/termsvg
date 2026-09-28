@@ -154,18 +154,21 @@ func TestRuntimeSelectionKeepsStableOrderOnCompleteTie(t *testing.T) {
 }
 
 func TestRuntimeSelectionRejectsMeasuredHrefExpansion(t *testing.T) {
+	// Pairs of adjacent rows flip together so every band state holds two rows
+	// and needs its own definition; a single interned row would be referenced
+	// directly and expose no nested expansion.
 	states := make([][]ir.Row, 12)
 	for state := range states {
-		states[state] = make([]ir.Row, len(states))
+		states[state] = make([]ir.Row, 2*len(states))
 		for row := range states[state] {
 			value := "0"
-			if state >= row {
+			if state >= row/2 {
 				value = "1"
 			}
-			states[state][row] = parityRow(row, parityRun(value, row*2, ir.CellAttrs{}))
+			states[state][row] = parityRow(row, parityRun(value, row, ir.CellAttrs{}))
 		}
 	}
-	rec := parityRecording(24, 12, states)
+	rec := parityRecording(24, 24, states)
 	config := renderer.DefaultConfig()
 	config.Minify = true
 	frameMetrics, err := New(config, WithLayout(LayoutFrames), WithAnimation(AnimationSMIL), WithFrameSwitch(FrameSwitchHref)).MeasureCandidate(context.Background(), rec)

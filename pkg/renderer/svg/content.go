@@ -67,7 +67,7 @@ func (c *canvas) prepareContentContext(ctx context.Context) (preparedContent, er
 	frames, defs := c.collectRows(states)
 	prepared := preparedContent{frameKeyframes: keyframes, frameRows: frames, rowDefs: defs}
 	if c.options.FrameSwitch == FrameSwitchHref && len(keyframes) > 1 {
-		prepared.frameStateIDs, _ = compactXMLIDs(xmlIDIndexAfter(len(defs)), len(frames))
+		prepared.frameStateIDs, _ = compactStateIDs(xmlIDIndexAfter(len(defs)), frames)
 	}
 	prepared.cost = buildPreparedContentCost(c, &prepared)
 	return prepared, contextErr(ctx)
@@ -313,7 +313,7 @@ func (c *canvas) materializeBands(ctx context.Context, bands []preparedBand) (pr
 		}
 		band.rows = frames[stateOffsets[i]:stateOffsets[i+1]]
 		if c.options.FrameSwitch == FrameSwitchHref && len(prepared.bands[i].keyframes) > 1 {
-			prepared.bands[i].stateIDs, nextID = compactXMLIDs(nextID, len(prepared.bands[i].rows))
+			prepared.bands[i].stateIDs, nextID = compactStateIDs(nextID, prepared.bands[i].rows)
 		}
 	}
 
@@ -336,6 +336,39 @@ func (c *canvas) materializeBands(ctx context.Context, bands []preparedBand) (pr
 	}
 	prepared.cost = buildPreparedContentCost(c, &prepared)
 	return prepared, contextErr(ctx)
+}
+
+// compactStateIDs assigns identifiers to href-switched states, continuing the
+// compact alphabet at the given allocator index. A state that is exactly one
+// interned row is referenced through that row's identifier and needs no
+// definition of its own, and every empty state shares one definition.
+func compactStateIDs(next int, states [][]*renderedRow) (ids []string, following int) {
+	ids = make([]string, len(states))
+	allocator := xmlIDAllocator{next: next}
+	empty := ""
+	for i, rows := range states {
+		switch {
+		case len(rows) == 1 && rows[0].id != "":
+			ids[i] = rows[0].id
+		case len(rows) == 0 && empty != "":
+			ids[i] = empty
+		default:
+			ids[i] = allocator.allocate()
+			if len(rows) == 0 {
+				empty = ids[i]
+			}
+		}
+	}
+	return ids, allocator.next
+}
+
+// ownsStateDefinition reports whether state i is serialized as its own
+// definition rather than reusing a row definition or an earlier state.
+func ownsStateDefinition(ids []string, states [][]*renderedRow, i int) bool {
+	if len(states[i]) == 1 && states[i][0].id == ids[i] {
+		return false
+	}
+	return !slices.Contains(ids[:i], ids[i])
 }
 
 func contentKeyframesFor(content timeline[[]ir.Row]) ([]keyframePoint[int], [][]ir.Row) {

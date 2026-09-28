@@ -1,6 +1,9 @@
 package svg
 
 import (
+	"bytes"
+	"context"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -126,4 +129,62 @@ func TestCompactXMLIDsSkipReservedClipIdentifier(t *testing.T) {
 	if got := xmlIDIndexAfter(clipIndex + 1); got != clipIndex+2 {
 		t.Fatalf("xmlIDIndexAfter() across clip = %d; want %d", got, clipIndex+2)
 	}
+}
+
+func TestStateIDsAliasSingleRowAndEmptyStates(t *testing.T) {
+	row := &renderedRow{id: "c"}
+	inline := &renderedRow{row: ir.Row{Runs: []ir.TextRun{{Text: "x"}}}, svg: `<text>x</text>`}
+	states := [][]*renderedRow{nil, {row}, {inline}, nil, {row, inline}, {row}}
+	ids, next := compactStateIDs(3, states)
+	want := []string{"d", "c", "e", "d", "f", "c"}
+	for i := range want {
+		if ids[i] != want[i] {
+			t.Fatalf("compactStateIDs() = %q; want %q", ids, want)
+		}
+	}
+	if next != 6 {
+		t.Fatalf("next allocator index = %d; want 6", next)
+	}
+	owned := make([]bool, len(states))
+	for i := range states {
+		owned[i] = ownsStateDefinition(ids, states, i)
+	}
+	if !reflect.DeepEqual(owned, []bool{true, false, true, false, true, false}) {
+		t.Fatalf("owned definitions = %v", owned)
+	}
+	if got := ownedStateDefinitions(ids, states); got != 3 {
+		t.Fatalf("ownedStateDefinitions() = %d; want 3", got)
+	}
+}
+
+func TestRender_AliasesSingleRowStatesToRowDefinitions(t *testing.T) {
+	rec := createTestRecording()
+	long := ir.Row{Y: 0, Runs: []ir.TextRun{{Text: "ROW:" + strings.Repeat("x", 60)}}}
+	other := ir.Row{Y: 0, Runs: []ir.TextRun{{Text: "OTHER:" + strings.Repeat("y", 60)}}}
+	rec.Frames = []ir.Frame{
+		{Rows: nil},
+		{Time: 500 * time.Millisecond, Rows: []ir.Row{long}},
+		{Time: time.Second, Rows: []ir.Row{other}},
+		{Time: 1500 * time.Millisecond, Rows: []ir.Row{long}},
+		{Time: 2 * time.Second, Rows: nil},
+		{Time: 2500 * time.Millisecond, Rows: []ir.Row{other}},
+	}
+	rec.Duration = 3 * time.Second
+
+	var buf bytes.Buffer
+	r := New(renderer.DefaultConfig(), WithAnimation(AnimationSMIL), WithFrameSwitch(FrameSwitchHref))
+	if err := r.Render(context.Background(), rec, &buf); err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	svg := buf.String()
+	if strings.Contains(svg, `<use id="`) {
+		t.Fatalf("single-row states still wrap their row reference:\n%s", svg)
+	}
+	if strings.Count(svg, `<g id="c"></g>`) != 1 || strings.Count(svg, `<g id="`) != 1 {
+		t.Fatalf("empty states do not share one definition:\n%s", svg)
+	}
+	if !strings.Contains(svg, `values="#c;#a;#b;#a;#c;#b;#b"`) {
+		t.Fatalf("href values do not reference the row definitions directly:\n%s", svg)
+	}
+	assertSemanticParity(t, rec, WithAnimation(AnimationSMIL), WithFrameSwitch(FrameSwitchHref))
 }

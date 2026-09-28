@@ -925,12 +925,16 @@ func (c *canvas) writeStateDefs(content *preparedContent) {
 		return
 	}
 	for i, id := range content.frameStateIDs {
-		c.writeStateDefinition(id, content.frameRows[i])
+		if ownsStateDefinition(content.frameStateIDs, content.frameRows, i) {
+			c.writeStateDefinition(id, content.frameRows[i])
+		}
 	}
 	for bandIndex := range content.bands {
 		band := &content.bands[bandIndex]
 		for i, id := range band.stateIDs {
-			c.writeStateDefinition(id, band.rows[i])
+			if ownsStateDefinition(band.stateIDs, band.rows, i) {
+				c.writeStateDefinition(id, band.rows[i])
+			}
 		}
 	}
 }
