@@ -79,9 +79,11 @@ func TestRectTracksEmitProfitableShrinkingBar(t *testing.T) {
 }
 
 func TestRectTracksAnimateFillAndKeepTextAboveBackground(t *testing.T) {
+	// Every state is distinct (growing width, alternating colour) so the
+	// snapshot strip cannot fold the timeline into two shared states.
 	states := make([]rectState, 20)
 	for i := range states {
-		states[i] = rectState{width: 8, alternate: i%2 == 1}
+		states[i] = rectState{width: 8 + i, alternate: i%2 == 1}
 	}
 	rec := rectTrackRecording(t, states, true)
 	config := renderer.DefaultConfig()

@@ -57,7 +57,7 @@ func TestWriteHrefSequenceUsesSingleRuntimeUse(t *testing.T) {
 	canvas := canvas{w: &out, plan: renderPlan{duration: time.Second}}
 	frames := []keyframePoint[int]{{selector: "0%", state: 1}, {selector: "100%", state: 0}}
 
-	canvas.writeHrefSequence(frames, []string{"_f0", "_f1"})
+	canvas.writeHrefSequence(frames, []string{"_f0", "_f1"}, "")
 
 	got := out.String()
 	if strings.Count(got, "<use ") != 1 || !strings.HasPrefix(got, `<use href="#_f1">`) {
@@ -161,13 +161,14 @@ func TestRender_AliasesSingleRowStatesToRowDefinitions(t *testing.T) {
 	rec := createTestRecording()
 	long := ir.Row{Y: 0, Runs: []ir.TextRun{{Text: "ROW:" + strings.Repeat("x", 60)}}}
 	other := ir.Row{Y: 0, Runs: []ir.TextRun{{Text: "OTHER:" + strings.Repeat("y", 60)}}}
+	other.Y = 1
 	rec.Frames = []ir.Frame{
 		{Rows: nil},
 		{Time: 500 * time.Millisecond, Rows: []ir.Row{long}},
-		{Time: time.Second, Rows: []ir.Row{other}},
-		{Time: 1500 * time.Millisecond, Rows: []ir.Row{long}},
+		{Time: time.Second, Rows: []ir.Row{long, other}},
+		{Time: 1500 * time.Millisecond, Rows: []ir.Row{other}},
 		{Time: 2 * time.Second, Rows: nil},
-		{Time: 2500 * time.Millisecond, Rows: []ir.Row{other}},
+		{Time: 2500 * time.Millisecond, Rows: []ir.Row{long, other}},
 	}
 	rec.Duration = 3 * time.Second
 
@@ -180,10 +181,14 @@ func TestRender_AliasesSingleRowStatesToRowDefinitions(t *testing.T) {
 	if strings.Contains(svg, `<use id="`) {
 		t.Fatalf("single-row states still wrap their row reference:\n%s", svg)
 	}
-	if strings.Count(svg, `<g id="c"></g>`) != 1 || strings.Count(svg, `<g id="`) != 1 {
-		t.Fatalf("empty states do not share one definition:\n%s", svg)
+	// Rows: long = a, other = b (both interned). States: blank = c (its own
+	// definition), [long] = a, [long, other] = d, [other] = b; the blank state
+	// recurs and the final keyframe holds the last state.
+	if strings.Count(svg, `<g id="c"></g>`) != 1 || strings.Count(svg, `<g id="`) != 2 ||
+		!strings.Contains(svg, `<g id="d"><use href="#a"/><use href="#b"/></g>`) {
+		t.Fatalf("state definitions are not shared as expected:\n%s", svg)
 	}
-	if !strings.Contains(svg, `values="#c;#a;#b;#a;#c;#b;#b"`) {
+	if !strings.Contains(svg, `values="#c;#a;#d;#b;#c;#d;#d"`) {
 		t.Fatalf("href values do not reference the row definitions directly:\n%s", svg)
 	}
 	assertSemanticParity(t, rec, WithAnimation(AnimationSMIL), WithFrameSwitch(FrameSwitchHref))

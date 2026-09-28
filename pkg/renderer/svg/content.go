@@ -371,20 +371,42 @@ func ownsStateDefinition(ids []string, states [][]*renderedRow, i int) bool {
 	return !slices.Contains(ids[:i], ids[i])
 }
 
+// contentKeyframesFor maps a timeline onto its distinct states. A state that
+// recurs later in the timeline, such as a region that alternates between two
+// values, is defined once and referenced again from the keyframes.
 func contentKeyframesFor(content timeline[[]ir.Row]) ([]keyframePoint[int], [][]ir.Row) {
 	frames := content.keyframes(rowsEqual)
 	states := make([][]ir.Row, 0, len(frames))
+	byHash := make(map[uint64][]int, len(frames))
 	out := make([]keyframePoint[int], len(frames))
 	for i, frame := range frames {
-		if len(states) == 0 || !rowsEqual(states[len(states)-1], frame.state) {
-			states = append(states, frame.state)
+		hash := rowsHash(frame.state)
+		index := -1
+		for _, candidate := range byHash[hash] {
+			if rowsEqual(states[candidate], frame.state) {
+				index = candidate
+				break
+			}
 		}
-		out[i] = keyframePoint[int]{selector: frame.selector, state: len(states) - 1}
+		if index < 0 {
+			index = len(states)
+			states = append(states, frame.state)
+			byHash[hash] = append(byHash[hash], index)
+		}
+		out[i] = keyframePoint[int]{selector: frame.selector, state: index}
 	}
 	if len(states) == 0 && len(content.points) > 0 {
 		states = append(states, content.points[len(content.points)-1].state)
 	}
 	return out, states
+}
+
+func rowsHash(rows []ir.Row) uint64 {
+	h := uint64(segmentHashOffset)
+	for _, row := range rows {
+		h = (h ^ semanticRowHash(row)) * segmentHashPrime
+	}
+	return h
 }
 
 func keyframeSignature(frames []keyframePoint[int], width int) string {

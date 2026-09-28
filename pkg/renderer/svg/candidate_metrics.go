@@ -501,7 +501,9 @@ func addLocalViewportMetrics(metrics *CandidateMetrics, c *canvas, content *prep
 	animations := 0
 	for i := range content.bands {
 		band := &content.bands[i]
-		addMetric(metrics, false, "svg", 1)
+		if band.kind != bandSnapshot || c.options.FrameSwitch != FrameSwitchHref || len(band.keyframes) <= 1 {
+			addMetric(metrics, false, "svg", 1)
+		}
 		if band.kind == bandScrollTape {
 			addMetric(metrics, false, "g", 1)
 			if c.options.Animation == AnimationSMIL {

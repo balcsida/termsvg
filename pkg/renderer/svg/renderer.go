@@ -1005,7 +1005,7 @@ func (c *canvas) writeFrames(
 		return
 	}
 	if c.options.FrameSwitch == FrameSwitchHref {
-		c.writeHrefSequence(frames, stateIDs)
+		c.writeHrefSequence(frames, stateIDs, "")
 		return
 	}
 	if c.options.Animation == AnimationSMIL {
@@ -1029,6 +1029,19 @@ func (c *canvas) writeBand(band *preparedBand) {
 	height := band.height * RowHeight
 	x, y := band.x*ColWidth, band.y*RowHeight
 	xAttr, yAttr := fmt.Sprintf(` x="%s"`, c.xmlInt(x)), fmt.Sprintf(` y="%s"`, c.xmlInt(y))
+	if band.kind == bandSnapshot && c.options.FrameSwitch == FrameSwitchHref && len(band.keyframes) > 1 {
+		// An href-switched band has no strip to clip, so the animated use is
+		// placed directly with the band offset instead of a nested viewport.
+		position := ""
+		if x != 0 {
+			position += xAttr
+		}
+		if y != 0 {
+			position += yAttr
+		}
+		c.writeHrefSequence(band.keyframes, band.stateIDs, position)
+		return
+	}
 	if c.config.Minify && x == 0 {
 		xAttr = ""
 	}
@@ -1067,7 +1080,7 @@ func (c *canvas) writeSnapshotBandBody(band *preparedBand, width int) {
 		return
 	}
 	if c.options.FrameSwitch == FrameSwitchHref {
-		c.writeHrefSequence(band.keyframes, band.stateIDs)
+		c.writeHrefSequence(band.keyframes, band.stateIDs, "")
 		return
 	}
 	if c.options.Animation == AnimationSMIL {
@@ -1088,7 +1101,9 @@ func (c *canvas) scrollFiniteAnimationFill() string {
 	return " forwards"
 }
 
-func (c *canvas) writeHrefSequence(frames []keyframePoint[int], ids []string) {
+// writeHrefSequence emits the animated use; position carries optional x/y
+// attributes that offset the switched states.
+func (c *canvas) writeHrefSequence(frames []keyframePoint[int], ids []string, position string) {
 	if len(frames) == 0 || len(ids) == 0 {
 		return
 	}
@@ -1096,7 +1111,7 @@ func (c *canvas) writeHrefSequence(frames []keyframePoint[int], ids []string) {
 	if initial < 0 || initial >= len(ids) {
 		return
 	}
-	fmt.Fprintf(c.w, `<use href="#%s">`, ids[initial])
+	fmt.Fprintf(c.w, `<use href="#%s"%s>`, ids[initial], position)
 	c.writeSMILHref(c.w, frames, ids)
 	fmt.Fprint(c.w, `</use>`)
 }

@@ -3,6 +3,7 @@ package svg
 import (
 	"bytes"
 	"context"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -18,10 +19,11 @@ import (
 func dashboardRecording(states int) *ir.Recording {
 	rows := make([][]ir.Row, states)
 	for i := 1; i < states-1; i++ {
-		value := strings.Repeat("#", i%7+1)
+		// Every value is distinct so no two states fold into one definition.
+		value := strings.Repeat("#", i%7+1) + strconv.Itoa(i)
 		rows[i] = []ir.Row{
 			parityRow(0, parityRun("load: "+value+strings.Repeat(" ", 20-len(value))+"<- press q to quit", 0, ir.CellAttrs{})),
-			parityRow(1, parityRun("mem:  "+value, 0, ir.CellAttrs{})),
+			parityRow(1, parityRun("memory used: "+value, 0, ir.CellAttrs{})),
 			parityRow(3, parityRun("axis: |....+....|....+....|....+....|", 0, ir.CellAttrs{})),
 		}
 	}
@@ -59,14 +61,14 @@ func TestIntervalLayersHoistCellsConstantOverStateRuns(t *testing.T) {
 					t.Fatalf("missing %q in:\n%s", want, svg)
 				}
 			}
-			for _, once := range []string{"press q to quit", "axis: |....+....|", ">load:", ">mem:"} {
+			for _, once := range []string{"press q to quit", "axis: |....+....|", ">load:", ">memory used:"} {
 				if got := strings.Count(svg, once); got != 1 {
 					t.Fatalf("%q serialized %d times, want once:\n%s", once, got, svg)
 				}
 			}
 			// The first "#" of every value is constant as well and joins the
 			// layer; the changing remainder stays in the states at its own column.
-			if strings.Count(svg, "load: ") != 1 || !strings.Contains(svg, `x="84" y="20">#</text>`) {
+			if strings.Count(svg, "load: ") != 1 || !strings.Contains(svg, `x="84" y="20">7</text>`) {
 				t.Fatalf("counter values are not left in the states at their column:\n%s", svg)
 			}
 		})

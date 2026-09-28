@@ -530,6 +530,7 @@ func TestRender_HoistsTextWhitespaceAndEscapesTextNodes(t *testing.T) {
 			{Y: 0, Runs: []ir.TextRun{{Text: "  static  ", StartCol: 2, Attrs: ir.CellAttrs{Underline: true}}}},
 			{Y: 1, Runs: []ir.TextRun{{Text: "  " + strings.Repeat("repeated middle ", 8), StartCol: 3}}},
 			{Y: 2, Runs: []ir.TextRun{{Text: `<safe>&"'`, StartCol: 5}}},
+			{Y: 4, Runs: []ir.TextRun{{Text: "end", StartCol: 1}}},
 		}},
 	}
 	rec.Duration = 2 * time.Second
@@ -874,7 +875,9 @@ func TestRender_ReusesProfitableRows(t *testing.T) {
 	rec.Frames = []ir.Frame{
 		{Time: 0, Rows: []ir.Row{row}},
 		{Time: 500 * time.Millisecond, Rows: []ir.Row{{Y: 0, Runs: []ir.TextRun{{Text: "different"}}}}},
-		{Time: time.Second, Rows: []ir.Row{row}},
+		// The last state repeats the row but differs as a whole, otherwise it
+		// would simply reuse the first state's definition.
+		{Time: time.Second, Rows: []ir.Row{row, {Y: 1, Runs: []ir.TextRun{{Text: "tail"}}}}},
 	}
 	rec.Duration = time.Second
 
@@ -916,7 +919,7 @@ func TestCollectRows_InlinesAtExactByteCost(t *testing.T) {
 	rec.Frames = []ir.Frame{
 		{Rows: []ir.Row{row}},
 		{Time: time.Second, Rows: []ir.Row{{Y: 0, Runs: []ir.TextRun{{Text: "different"}}}}},
-		{Time: 2 * time.Second, Rows: []ir.Row{row}},
+		{Time: 2 * time.Second, Rows: []ir.Row{row, {Y: 1, Runs: []ir.TextRun{{Text: "tail"}}}}},
 	}
 	rec.Duration = 2 * time.Second
 	c := &canvas{rec: rec, config: *renderer.DefaultConfig()}
@@ -933,7 +936,7 @@ func TestCollectRows_InlinesAtExactByteCost(t *testing.T) {
 
 func TestCollectRows_AccountsForAAIDLength(t *testing.T) {
 	rec := createTestRecording()
-	rec.Height = 27
+	rec.Height = 28
 	rec.Frames = make([]ir.Frame, 3)
 	for _, i := range []int{0, 2} {
 		for j := range 26 {
@@ -943,6 +946,9 @@ func TestCollectRows_AccountsForAAIDLength(t *testing.T) {
 		rec.Frames[i].Rows = append(rec.Frames[i].Rows,
 			ir.Row{Y: 26, Runs: []ir.TextRun{{Text: strings.Repeat("x", 19)}}})
 	}
+	// The last state must differ from the first as a whole so its rows are
+	// interned individually instead of reusing the first state.
+	rec.Frames[2].Rows = append(rec.Frames[2].Rows, ir.Row{Y: 27, Runs: []ir.TextRun{{Text: "tail"}}})
 	for j := range 27 {
 		// Distinct text per row keeps segment sharing out of this measurement.
 		text := "different" + strconv.Itoa(j)

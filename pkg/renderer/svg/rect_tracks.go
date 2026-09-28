@@ -22,7 +22,6 @@ func (c *canvas) retainedRectCandidate(band rowBand) (retainedRectTrack, timelin
 	}
 	keyframes, states := contentKeyframesFor(band.content)
 	spans := make([]*backgroundSpan, len(states))
-	var first *backgroundSpan
 	for i, state := range states {
 		if len(state) > 1 {
 			return retainedRectTrack{}, timeline[[]ir.Row]{}, false
@@ -38,32 +37,34 @@ func (c *canvas) retainedRectCandidate(band rowBand) (retainedRectTrack, timelin
 		if len(backgrounds) == 1 {
 			span := backgrounds[0]
 			spans[i] = &span
-			if first == nil {
-				first = &span
-			}
+		}
+	}
+	// The rectangle keeps its last position and colour while it is absent,
+	// so the carry follows the keyframes in time order, not the state order.
+	var first *backgroundSpan
+	for _, frame := range keyframes {
+		if spans[frame.state] != nil {
+			first = spans[frame.state]
+			break
 		}
 	}
 	if first == nil {
 		return retainedRectTrack{}, timeline[[]ir.Row]{}, false
 	}
 	last := *first
-	stateX, stateWidth, stateFill := make([]int, len(states)), make([]int, len(states)), make([]color.ID, len(states))
-	for i, span := range spans {
-		if span != nil {
-			last = *span
-			stateWidth[i] = (span.endCol - span.startCol) * ColWidth
-		}
-		stateX[i] = last.startCol * ColWidth
-		stateFill[i] = last.colorID
-	}
 	track := retainedRectTrack{
 		x: make([]keyframePoint[int], len(keyframes)), width: make([]keyframePoint[int], len(keyframes)),
 		fill: make([]keyframePoint[color.ID], len(keyframes)),
 	}
 	for i, frame := range keyframes {
-		track.x[i] = keyframePoint[int]{selector: frame.selector, state: stateX[frame.state]}
-		track.width[i] = keyframePoint[int]{selector: frame.selector, state: stateWidth[frame.state]}
-		track.fill[i] = keyframePoint[color.ID]{selector: frame.selector, state: stateFill[frame.state]}
+		width := 0
+		if span := spans[frame.state]; span != nil {
+			last = *span
+			width = (span.endCol - span.startCol) * ColWidth
+		}
+		track.x[i] = keyframePoint[int]{selector: frame.selector, state: last.startCol * ColWidth}
+		track.width[i] = keyframePoint[int]{selector: frame.selector, state: width}
+		track.fill[i] = keyframePoint[color.ID]{selector: frame.selector, state: last.colorID}
 	}
 	return track, stripBackgrounds(band.content), true
 }

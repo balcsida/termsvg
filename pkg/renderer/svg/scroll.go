@@ -17,6 +17,13 @@ func detectUpwardScrollTape(band rowBand, colors *color.Catalog) (scrollTape, bo
 	if band.height < 2 || len(states) < 2 {
 		return scrollTape{}, false
 	}
+	// A tape only scrolls forward: every keyframe must introduce the next
+	// state in order, so a state that recurs later rules the tape out.
+	for i, frame := range keyframes {
+		if frame.state != min(i, len(states)-1) {
+			return scrollTape{}, false
+		}
+	}
 	full := make([][]ir.Row, len(states))
 	for stateIndex, state := range states {
 		full[stateIndex] = make([]ir.Row, band.height)
