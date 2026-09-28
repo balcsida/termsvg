@@ -21,12 +21,12 @@ This table tracks size changes between the first release of the example and the 
 <!--SIZES_START-->
 | File | Iterations | First Size | Current Size | Variation |
 |------|:----------:|------------|--------------|-----------|
-| 256colors.svg | 15 | 954.73kB | 63.57kB | 93.3400% |
-| 444816.svg | 14 | 3.42MB | 259.47kB | 92.4000% |
-| 444816_borderless.svg | 7 | 3.11MB | 259.33kB | 91.6400% |
-| htop.svg | 14 | 74.15kB | 25.61kB | 65.4600% |
+| 256colors.svg | 16 | 954.73kB | 42.05kB | 95.5900% |
+| 444816.svg | 15 | 3.42MB | 258.07kB | 92.4400% |
+| 444816_borderless.svg | 8 | 3.11MB | 257.93kB | 91.6900% |
+| htop.svg | 15 | 74.15kB | 16.70kB | 77.4800% |
 | rgb.svg | 11 | 95.53kB | 6.75kB | 92.9300% |
-| session.svg | 15 | 462.64kB | 34.79kB | 92.4800% |
+| session.svg | 16 | 462.64kB | 20.36kB | 95.6000% |
 
 <!--SIZES_END-->
 

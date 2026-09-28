@@ -46,13 +46,26 @@ type renderedRow struct {
 	count      int
 	order      int
 	id         string
+	// elements is the number of XML elements in svg. It is zero for rows
+	// constructed without segment sharing, where the row itself is authoritative.
+	elements int
+	// uses lists the shared segment identifiers referenced by svg, in order.
+	uses []string
+	// inline holds the runs serialized directly when uses is not empty.
+	inline ir.Row
 }
 
 type backgroundSpan struct {
 	startCol int
 	endCol   int
 	colorID  color.ID
+	firstRun int
+	lastRun  int
 }
+
+// xmlIDAllocator hands out compact XML identifiers in order, skipping the
+// reserved clip path identifier.
+type xmlIDAllocator struct{ next int }
 
 type preparedCandidate struct {
 	plan    *semanticPlan
@@ -87,6 +100,43 @@ const (
 )
 
 var svgTextEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
+
+// paintRow returns the runs whose paint is serialized by this row itself,
+// excluding runs that are drawn through shared segment references.
+func (r *renderedRow) paintRow() ir.Row {
+	if len(r.uses) > 0 {
+		return r.inline
+	}
+	return r.row
+}
+
+func (a *xmlIDAllocator) allocate() string {
+	for {
+		id := compactXMLIDAt(a.next)
+		a.next++
+		if id != "clip" {
+			return id
+		}
+	}
+}
+
+// compactXMLIDs allocates count identifiers starting at allocator index start
+// and returns the index that follows them.
+func compactXMLIDs(start, count int) (ids []string, next int) {
+	allocator := xmlIDAllocator{next: start}
+	ids = make([]string, count)
+	for i := range ids {
+		ids[i] = allocator.allocate()
+	}
+	return ids, allocator.next
+}
+
+// xmlIDIndexAfter returns the allocator index that follows count identifiers
+// allocated from the start of the alphabet.
+func xmlIDIndexAfter(count int) int {
+	_, next := compactXMLIDs(0, count)
+	return next
+}
 
 func (r *Renderer) buildSemanticPlan(ctx context.Context, rec *ir.Recording) (semanticPlan, error) {
 	if r.onSemanticPlanBuild != nil {
@@ -656,10 +706,19 @@ func (c *canvas) collectRowsWithHash(
 		}
 	}
 
-	for _, entry := range ordered {
-		var sb strings.Builder
-		c.writeRow(&sb, entry.row)
-		entry.svg = sb.String()
+	// Shared segments are chosen first so whole-row interning below measures
+	// the markup that will actually be serialized.
+	markup := make([]rowMarkup, len(ordered))
+	for i, entry := range ordered {
+		markup[i] = c.buildRowMarkup(entry.row)
+	}
+	ids := &xmlIDAllocator{}
+	uses, defs := c.shareRowSegments(markup, ids)
+	for i, entry := range ordered {
+		entry.svg, entry.elements, entry.inline = markup[i].render(c, uses[i])
+		for _, use := range uses[i] {
+			entry.uses = append(entry.uses, use.def.id)
+		}
 	}
 
 	// Give the most frequently referenced rows the shortest identifiers. The
@@ -672,18 +731,19 @@ func (c *canvas) collectRowsWithHash(
 		return a.order - b.order
 	})
 
-	defs = make([]*renderedRow, 0)
 	for _, entry := range candidates {
 		if entry.count < 2 || entry.svg == "" {
 			continue
 		}
-		id := compactXMLID(len(defs))
+		probe := *ids
+		id := probe.allocate()
 		definition := c.rowDefinition(entry, id)
 		use := `<use href="#` + id + `"/>`
 		inlineBytes := entry.count * finalSVGBytes(entry.svg, c.config.Minify)
 		definitionBytes := finalSVGBytes(definition, c.config.Minify) +
 			entry.count*finalSVGBytes(use, c.config.Minify)
 		if definitionBytes < inlineBytes {
+			*ids = probe
 			entry.id = id
 			entry.definition = definition
 			defs = append(defs, entry)
@@ -729,10 +789,20 @@ func finalSVGBytes(value string, minified bool) int {
 }
 
 func (c *canvas) rowDefinition(row *renderedRow, id string) string {
-	if c.rowElementCount(row.row) == 1 {
+	if c.renderedElementCount(row) == 1 {
 		return addElementID(row.svg, id)
 	}
 	return `<g id="` + id + `">` + row.svg + `</g>`
+}
+
+// renderedElementCount reports the XML elements a rendered row serializes.
+// Rows produced by collectRows carry an exact count; rows constructed directly
+// from IR fall back to counting their runs.
+func (c *canvas) renderedElementCount(row *renderedRow) int {
+	if row.elements > 0 {
+		return row.elements
+	}
+	return c.rowElementCount(row.paintRow()) + len(row.uses)
 }
 
 func addElementID(svg, id string) string {
@@ -862,7 +932,7 @@ func (c *canvas) stateNeedsWrapper(rows []*renderedRow) bool {
 		if row.id != "" {
 			return false
 		}
-		if c.rowElementCount(row.row) == 1 {
+		if c.renderedElementCount(row) == 1 {
 			return elementIDPrefix(row.svg) == ""
 		}
 	}
@@ -875,7 +945,7 @@ func (c *canvas) stateElementCount(rows []*renderedRow) int {
 		if row.id != "" {
 			count++
 		} else {
-			count += c.rowElementCount(row.row)
+			count += c.renderedElementCount(row)
 		}
 	}
 	return count
@@ -1050,38 +1120,45 @@ func renderedRowsHaveOutput(rows []*renderedRow) bool {
 
 func (c *canvas) writeRow(w io.Writer, row ir.Row) {
 	for _, span := range c.backgroundSpans(row) {
-		x := span.startCol * ColWidth
-		xAttr := ""
-		if x != 0 {
-			xAttr = fmt.Sprintf(` x="%s"`, c.xmlInt(x))
-		}
-		if c.style.scheme == "" || c.style.scheme == styleLegacy {
-			fmt.Fprintf(w, `<rect class="%s"%s y="%s" width="%s" height="%s"/>`,
-				c.classNames[span.colorID], xAttr, c.xmlInt(row.Y*RowHeight),
-				c.xmlInt((span.endCol-span.startCol)*ColWidth), c.xmlInt(RowHeight))
-		} else {
-			fmt.Fprintf(w, `<rect%s%s y="%s" width="%s" height="%s"/>`,
-				styleAttributes(c.style.backgrounds[span.colorID]), xAttr, c.xmlInt(row.Y*RowHeight),
-				c.xmlInt((span.endCol-span.startCol)*ColWidth), c.xmlInt(RowHeight))
-		}
+		c.writeBackgroundSpan(w, row.Y, span)
 	}
 	for _, run := range row.Runs {
 		c.writeTextRun(w, run, row.Y)
 	}
 }
 
+func (c *canvas) writeBackgroundSpan(w io.Writer, rowY int, span backgroundSpan) {
+	x := span.startCol * ColWidth
+	xAttr := ""
+	if x != 0 {
+		xAttr = ` x="` + c.xmlInt(x) + `"`
+	}
+	if c.style.scheme == "" || c.style.scheme == styleLegacy {
+		fmt.Fprintf(w, `<rect class="%s"%s y="%s" width="%s" height="%s"/>`,
+			c.classNames[span.colorID], xAttr, c.xmlInt(rowY*RowHeight),
+			c.xmlInt((span.endCol-span.startCol)*ColWidth), c.xmlInt(RowHeight))
+		return
+	}
+	fmt.Fprintf(w, `<rect%s%s y="%s" width="%s" height="%s"/>`,
+		styleAttributes(c.style.backgrounds[span.colorID]), xAttr, c.xmlInt(rowY*RowHeight),
+		c.xmlInt((span.endCol-span.startCol)*ColWidth), c.xmlInt(RowHeight))
+}
+
 func (c *canvas) backgroundSpans(row ir.Row) []backgroundSpan {
 	spans := make([]backgroundSpan, 0, len(row.Runs))
-	for _, run := range row.Runs {
+	for i, run := range row.Runs {
 		endCol := runEndCol(run)
 		if c.rec.Colors.IsDefault(run.Attrs.BG) || endCol <= run.StartCol {
 			continue
 		}
 		if len(spans) > 0 && spans[len(spans)-1].colorID == run.Attrs.BG && spans[len(spans)-1].endCol == run.StartCol {
 			spans[len(spans)-1].endCol = endCol
+			spans[len(spans)-1].lastRun = i
 			continue
 		}
-		spans = append(spans, backgroundSpan{startCol: run.StartCol, endCol: endCol, colorID: run.Attrs.BG})
+		spans = append(spans, backgroundSpan{
+			startCol: run.StartCol, endCol: endCol, colorID: run.Attrs.BG, firstRun: i, lastRun: i,
+		})
 	}
 	return spans
 }

@@ -114,6 +114,7 @@ func scanSVG(raw []byte, result *metrics) (styles, transforms []string, groups [
 	rootSVGSeen := false
 	animatedParents := map[int]bool{}
 	definitionUses := map[string][]string{}
+	stateTargets := map[string]bool{}
 	var activeUses []string
 	decoder := xml.NewDecoder(bytes.NewReader(raw))
 	for {
@@ -133,6 +134,7 @@ func scanSVG(raw []byte, result *metrics) (styles, transforms []string, groups [
 				currentViewport = viewports[len(viewports)-1]
 			}
 			var elementTransforms []string
+			attributeName, values := "", ""
 			for _, attr := range token.Attr {
 				switch attr.Name.Local {
 				case "id":
@@ -145,6 +147,18 @@ func scanSVG(raw []byte, result *metrics) (styles, transforms []string, groups [
 					currentViewport.height = dimension(attr.Value)
 				case "transform":
 					elementTransforms = append(elementTransforms, attr.Value)
+				case "attributeName":
+					attributeName = attr.Value
+				case "values":
+					values = attr.Value
+				}
+			}
+			if name == "animate" && attributeName == "href" {
+				// State definitions are the targets an href animation switches between.
+				for _, target := range strings.Split(values, ";") {
+					if target = strings.TrimPrefix(strings.TrimSpace(target), "#"); target != "" {
+						stateTargets[target] = true
+					}
 				}
 			}
 			if name == "svg" {
@@ -184,9 +198,6 @@ func scanSVG(raw []byte, result *metrics) (styles, transforms []string, groups [
 			}
 			if defsDepth > 0 && id != "" {
 				owner = id
-				if name == "g" && (strings.HasPrefix(id, "_f") || strings.HasPrefix(id, "_b")) {
-					result.StateDefinitions++
-				}
 			}
 			if name == "use" && href != "" {
 				if defsDepth > 0 && owner != "" {
@@ -261,6 +272,7 @@ func scanSVG(raw []byte, result *metrics) (styles, transforms []string, groups [
 		}
 	}
 	result.AnimatedElements = len(animatedParents)
+	result.StateDefinitions = len(stateTargets)
 	result.MaxUseDepth = maxUseDepth(activeUses, definitionUses)
 	return styles, transforms, groups, nil
 }

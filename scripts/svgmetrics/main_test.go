@@ -65,8 +65,8 @@ func TestMeasureUsesOnlyTranslateXComponent(t *testing.T) {
 }
 
 func TestMeasureReportsStructuralCandidateCosts(t *testing.T) {
-	raw := []byte(`<svg width="100" height="50"><defs><g id="_f0"><text>x</text></g></defs>` +
-		`<g><use href="#_f0"><animate attributeName="href"/></use></g>` +
+	raw := []byte(`<svg width="100" height="50"><defs><g id="b"><text>x</text></g></defs>` +
+		`<g><use href="#b"><animate attributeName="href" values="#b;#b"/></use></g>` +
 		`<svg width="20" height="10"><g transform="translate(40)"><rect/></g></svg></svg>`)
 	m, err := measure(raw, raw)
 	if err != nil {

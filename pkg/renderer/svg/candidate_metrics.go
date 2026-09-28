@@ -112,7 +112,7 @@ func addStructuralMetrics(metrics *CandidateMetrics, c *canvas, content *prepare
 	addMetric(metrics, false, "style", 1)
 
 	for _, definition := range content.rowDefs {
-		if c.rowElementCount(definition.row) > 1 {
+		if c.renderedElementCount(definition) > 1 {
 			addMetric(metrics, true, "g", 1)
 		}
 		renderedDefinition := *definition
@@ -203,12 +203,17 @@ func addUseExpansionMetrics(metrics *CandidateMetrics, c *canvas, content *prepa
 	metrics.SourceActiveNodes, metrics.SourceDefinitionNodes = metrics.ActiveNodes, metrics.DefinitionNodes
 	graph := make(map[string]definitionNode)
 	for _, row := range content.rowDefs {
-		graph[row.id] = definitionNode{nodes: uint64(c.rowElementCount(row.row) + boolInt(c.rowElementCount(row.row) > 1))}
+		elements := c.renderedElementCount(row)
+		//nolint:gosec // element counts are non-negative.
+		graph[row.id] = definitionNode{nodes: uint64(elements + boolInt(elements > 1)), uses: row.uses}
 	}
 	rowUses := func(rows []*renderedRow) (nodes uint64, ids []string) {
 		for _, row := range rows {
 			if row.id == "" {
-				nodes = saturatingAdd(nodes, uint64(c.rowElementCount(row.row)))
+				// Segment references are counted through ids below, one node each.
+				//nolint:gosec // element counts are non-negative.
+				nodes = saturatingAdd(nodes, uint64(c.renderedElementCount(row)-len(row.uses)))
+				ids = append(ids, row.uses...)
 				continue
 			}
 			ids = append(ids, row.id)
@@ -269,6 +274,10 @@ func addUseExpansionMetrics(metrics *CandidateMetrics, c *canvas, content *prepa
 				for _, row := range rows {
 					if row.id != "" {
 						peak = saturatingAdd(peak, expand(row.id))
+						continue
+					}
+					for _, id := range row.uses {
+						peak = saturatingAdd(peak, expand(id))
 					}
 				}
 			}
@@ -410,8 +419,10 @@ func addRowMetrics(metrics *CandidateMetrics, c *canvas, definition bool, render
 		addMetric(metrics, definition, "use", 1)
 		return
 	}
-	addMetric(metrics, definition, "rect", len(c.backgroundSpans(rendered.row)))
-	for _, run := range rendered.row.Runs {
+	addMetric(metrics, definition, "use", len(rendered.uses))
+	row := rendered.paintRow()
+	addMetric(metrics, definition, "rect", len(c.backgroundSpans(row)))
+	for _, run := range row.Runs {
 		if shouldRenderText(run) {
 			addMetric(metrics, definition, "text", 1)
 		}

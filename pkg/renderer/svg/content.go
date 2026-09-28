@@ -67,7 +67,7 @@ func (c *canvas) prepareContentContext(ctx context.Context) (preparedContent, er
 	frames, defs := c.collectRows(states)
 	prepared := preparedContent{frameKeyframes: keyframes, frameRows: frames, rowDefs: defs}
 	if c.options.FrameSwitch == FrameSwitchHref && len(keyframes) > 1 {
-		prepared.frameStateIDs = stateIDs("_f", len(frames))
+		prepared.frameStateIDs, _ = compactXMLIDs(xmlIDIndexAfter(len(defs)), len(frames))
 	}
 	prepared.cost = buildPreparedContentCost(c, &prepared)
 	return prepared, contextErr(ctx)
@@ -300,6 +300,9 @@ func (c *canvas) materializeBands(ctx context.Context, bands []preparedBand) (pr
 		return preparedContent{}, err
 	}
 	prepared.rowDefs = defs
+	// State identifiers continue the compact alphabet after the row
+	// definitions so every href reference stays as short as possible.
+	nextID := xmlIDIndexAfter(len(defs))
 	for i := range prepared.bands {
 		band := &prepared.bands[i]
 		if band.kind == bandScrollTape {
@@ -310,7 +313,7 @@ func (c *canvas) materializeBands(ctx context.Context, bands []preparedBand) (pr
 		}
 		band.rows = frames[stateOffsets[i]:stateOffsets[i+1]]
 		if c.options.FrameSwitch == FrameSwitchHref && len(prepared.bands[i].keyframes) > 1 {
-			prepared.bands[i].stateIDs = stateIDs("_b"+strconv.Itoa(i)+"_", len(prepared.bands[i].rows))
+			prepared.bands[i].stateIDs, nextID = compactXMLIDs(nextID, len(prepared.bands[i].rows))
 		}
 	}
 
@@ -362,12 +365,4 @@ func keyframeSignature(frames []keyframePoint[int], width int) string {
 		signature.WriteByte(';')
 	}
 	return signature.String()
-}
-
-func stateIDs(prefix string, count int) []string {
-	ids := make([]string, count)
-	for i := range count {
-		ids[i] = prefix + strconv.Itoa(i)
-	}
-	return ids
 }

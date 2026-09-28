@@ -8,6 +8,7 @@ import (
 	"image/color"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -943,7 +944,9 @@ func TestCollectRows_AccountsForAAIDLength(t *testing.T) {
 			ir.Row{Y: 26, Runs: []ir.TextRun{{Text: strings.Repeat("x", 19)}}})
 	}
 	for j := range 27 {
-		rec.Frames[1].Rows = append(rec.Frames[1].Rows, ir.Row{Y: j, Runs: []ir.TextRun{{Text: "different"}}})
+		// Distinct text per row keeps segment sharing out of this measurement.
+		text := "different" + strconv.Itoa(j)
+		rec.Frames[1].Rows = append(rec.Frames[1].Rows, ir.Row{Y: j, Runs: []ir.TextRun{{Text: text}}})
 	}
 	rec.Frames[1].Time = time.Second
 	rec.Frames[2].Time = 2 * time.Second

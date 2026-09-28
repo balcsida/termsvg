@@ -100,12 +100,30 @@ func TestSingleChildStateElisionSavesExactBytes(t *testing.T) {
 	}
 }
 
-func TestStateIDsUseReservedPrefix(t *testing.T) {
-	got := stateIDs("_b2_", 3)
-	want := []string{"_b2_0", "_b2_1", "_b2_2"}
+func TestStateIDsContinueCompactAlphabetAfterRowDefinitions(t *testing.T) {
+	got, next := compactXMLIDs(xmlIDIndexAfter(25), 3)
+	want := []string{"z", "aa", "ab"}
 	for i := range want {
 		if got[i] != want[i] {
-			t.Fatalf("stateIDs()[%d] = %q; want %q", i, got[i], want[i])
+			t.Fatalf("compactXMLIDs()[%d] = %q; want %q", i, got[i], want[i])
 		}
+	}
+	if next != 28 {
+		t.Fatalf("next allocator index = %d; want 28", next)
+	}
+}
+
+func TestCompactXMLIDsSkipReservedClipIdentifier(t *testing.T) {
+	clipIndex := 0
+	for compactXMLIDAt(clipIndex) != "clip" {
+		clipIndex++
+	}
+	ids, next := compactXMLIDs(clipIndex-1, 3)
+	if ids[0] != compactXMLIDAt(clipIndex-1) || ids[1] == "clip" || ids[1] != compactXMLIDAt(clipIndex+1) ||
+		ids[2] != compactXMLIDAt(clipIndex+2) || next != clipIndex+3 {
+		t.Fatalf("compactXMLIDs() around clip = %q, next %d", ids, next)
+	}
+	if got := xmlIDIndexAfter(clipIndex + 1); got != clipIndex+2 {
+		t.Fatalf("xmlIDIndexAfter() across clip = %d; want %d", got, clipIndex+2)
 	}
 }
