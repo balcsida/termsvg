@@ -15,6 +15,7 @@ type semanticPlan struct {
 	width             int
 	height            int
 	staticRows        []ir.Row
+	layers            []intervalLayer
 	content           timeline[[]ir.Row]
 	cursor            timeline[ir.Cursor]
 	cursorEverVisible bool

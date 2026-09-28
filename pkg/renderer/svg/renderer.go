@@ -174,15 +174,50 @@ func (r *Renderer) Render(ctx context.Context, rec *ir.Recording, w io.Writer) e
 	if err := r.options.Validate(); err != nil {
 		return err
 	}
-	plan, err := r.buildSemanticPlan(ctx, rec)
-	if err != nil {
-		return err
-	}
-	candidate, err := r.prepareSelectedCandidate(ctx, rec, &plan)
+	candidate, err := r.prepareBestCandidate(ctx, rec)
 	if err != nil {
 		return err
 	}
 	return r.serializeCandidate(ctx, rec, w, candidate)
+}
+
+// prepareBestCandidate prepares the configured candidate for every plan
+// variant and keeps the one the objective prefers. Interval-static layers are
+// chosen by an estimate, so the plan without them is measured as well.
+func (r *Renderer) prepareBestCandidate(ctx context.Context, rec *ir.Recording) (*preparedCandidate, error) {
+	plan, err := r.buildSemanticPlan(ctx, rec)
+	if err != nil {
+		return nil, err
+	}
+	layered, err := r.selectIntervalLayers(ctx, rec, &plan)
+	if err != nil {
+		return nil, err
+	}
+	plans := []semanticPlan{plan}
+	if len(layered.layers) > 0 {
+		plans = append(plans, layered)
+	}
+	candidates := make([]*preparedCandidate, 0, len(plans))
+	for i := range plans {
+		candidate, err := r.prepareSelectedCandidate(ctx, rec, &plans[i])
+		if err != nil {
+			return nil, err
+		}
+		if candidate.metrics.FinalBytes == 0 {
+			if err := r.measureCandidate(ctx, rec, candidate); err != nil {
+				return nil, err
+			}
+		}
+		candidates = append(candidates, candidate)
+	}
+	selected := selectPreparedCandidate(r.options.AutoObjective, candidates...)
+	if r.config.Debug && len(candidates) > 1 {
+		for _, candidate := range candidates {
+			log.Printf("[SVG] plan variant layers=%d bytes=%d selected=%t",
+				len(candidate.plan.layers), candidate.metrics.FinalBytes, candidate == selected)
+		}
+	}
+	return selected, nil
 }
 
 // MeasureCandidate renders the configured candidate to a sink and reports its
@@ -194,18 +229,9 @@ func (r *Renderer) MeasureCandidate(ctx context.Context, rec *ir.Recording) (Can
 	if err := r.options.Validate(); err != nil {
 		return CandidateMetrics{}, err
 	}
-	plan, err := r.buildSemanticPlan(ctx, rec)
+	candidate, err := r.prepareBestCandidate(ctx, rec)
 	if err != nil {
 		return CandidateMetrics{}, err
-	}
-	candidate, err := r.prepareSelectedCandidate(ctx, rec, &plan)
-	if err != nil {
-		return CandidateMetrics{}, err
-	}
-	if candidate.metrics.FinalBytes == 0 {
-		if err := r.measureCandidate(ctx, rec, candidate); err != nil {
-			return CandidateMetrics{}, err
-		}
 	}
 	return candidate.metrics, nil
 }
@@ -523,6 +549,7 @@ func (c *canvas) render(ctx context.Context, content *preparedContent) error {
 	for _, row := range c.plan.staticRows {
 		c.writeRow(c.w, row)
 	}
+	c.writeLayers(c.w)
 	c.writeContent(content)
 	c.writeCursor()
 
@@ -598,6 +625,9 @@ func (c *canvas) writeStyles(content *preparedContent) {
 		}
 		if len(c.cursorKeyframes()) > 1 {
 			sb.WriteString(c.generateCursorKeyframes())
+		}
+		for index := range c.plan.layers {
+			sb.WriteString(c.generateLayerKeyframes(index))
 		}
 	}
 	if c.plan.cursorEverVisible {

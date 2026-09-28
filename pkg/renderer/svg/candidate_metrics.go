@@ -122,6 +122,19 @@ func addStructuralMetrics(metrics *CandidateMetrics, c *canvas, content *prepare
 	for _, static := range c.plan.staticRows {
 		addRowMetrics(metrics, c, false, &renderedRow{row: static})
 	}
+	layerAnimations := 0
+	for i := range c.plan.layers {
+		addMetric(metrics, false, "g", 1)
+		if len(c.layerVisibility(c.plan.layers[i])) > 1 {
+			layerAnimations++
+			if c.options.Animation == AnimationSMIL {
+				addMetric(metrics, false, "animation", 1)
+			}
+		}
+		for _, row := range c.plan.layers[i].rows {
+			addRowMetrics(metrics, c, false, &renderedRow{row: row})
+		}
+	}
 
 	for i := range content.frameStateIDs {
 		if c.stateNeedsWrapper(content.frameRows[i]) {
@@ -139,7 +152,7 @@ func addStructuralMetrics(metrics *CandidateMetrics, c *canvas, content *prepare
 		}
 	}
 
-	animations := addActiveContentMetrics(metrics, c, content)
+	animations := addActiveContentMetrics(metrics, c, content) + layerAnimations
 	if c.plan.cursorEverVisible {
 		addMetric(metrics, false, "g", 1)
 		addMetric(metrics, false, "rect", 1)

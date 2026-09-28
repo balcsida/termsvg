@@ -74,6 +74,9 @@ func buildPreparedCandidateCost(c *canvas, candidate *preparedCandidate) prepare
 		row := row
 		ledger.add(func(w io.Writer) { c.writeRow(w, row) })
 	}
+	for index := range c.plan.layers {
+		ledger.add(func(w io.Writer) { c.writeLayer(w, index) })
+	}
 	ledger.addBytes(candidate.content.cost.active)
 	ledger.add(func(w io.Writer) { c.w = w; c.writeCursor() })
 	ledger.add(func(w io.Writer) { fmt.Fprint(w, `</g></svg>`) })

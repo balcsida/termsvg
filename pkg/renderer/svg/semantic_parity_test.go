@@ -200,7 +200,6 @@ func assertSemanticParity(t *testing.T, rec *ir.Recording, opts ...Option) {
 
 func assertSemanticParityWithConfig(t *testing.T, rec *ir.Recording, config *renderer.Config, opts ...Option) {
 	t.Helper()
-	before := cloneRecording(rec)
 	options := DefaultOptions()
 	for _, option := range opts {
 		option(&options)
@@ -209,12 +208,35 @@ func assertSemanticParityWithConfig(t *testing.T, rec *ir.Recording, config *ren
 	if err != nil {
 		t.Fatalf("build semantic plan: %v", err)
 	}
+	assertPlanParity(t, rec, config, &options, &plan)
+}
+
+// assertLayeredSemanticParity checks the plan after interval-static layer
+// selection, which the renderer applies on top of buildSemanticPlan.
+func assertLayeredSemanticParity(t *testing.T, rec *ir.Recording, opts ...Option) renderPlan {
+	t.Helper()
+	config := renderer.DefaultConfig()
+	options := DefaultOptions()
+	for _, option := range opts {
+		option(&options)
+	}
+	plan, err := layeredPlan(context.Background(), rec, config, &options)
+	if err != nil {
+		t.Fatalf("layered plan: %v", err)
+	}
+	assertPlanParity(t, rec, config, &options, &plan)
+	return plan
+}
+
+func assertPlanParity(t *testing.T, rec *ir.Recording, config *renderer.Config, options *Options, plan *renderPlan) {
+	t.Helper()
+	before := cloneRecording(rec)
 	c := canvas{
-		rec: rec, plan: plan, config: *config, options: options,
+		rec: rec, plan: *plan, config: *config, options: *options,
 		classNames: rec.Colors.GenerateClassNames(), metrics: &CandidateMetrics{},
 	}
 	if options.Layout == LayoutRegions {
-		regions := buildDynamicRegions(&plan, rec.Colors)
+		regions := buildDynamicRegions(plan, rec.Colors)
 		optimized, err := c.optimizeDynamicRegions(context.Background(), regions)
 		if err != nil {
 			t.Fatalf("optimize regions: %v", err)
@@ -228,11 +250,12 @@ func assertSemanticParityWithConfig(t *testing.T, rec *ir.Recording, config *ren
 
 	for _, at := range effectiveTimes(rec) {
 		want := screenFromRows(rec, sourceRowsAt(rec, at), 0, 0)
-		planned := append(slices.Clone(plan.staticRows), timelineStateAt(plan.content, at)...)
+		planned := append(slices.Clone(plan.staticRows), plan.layerRowsAt(at)...)
+		planned = append(planned, timelineStateAt(plan.content, at)...)
 		if got := screenFromRows(rec, planned, 0, 0); !reflect.DeepEqual(got, want) {
 			t.Fatalf("planned screen at %v differs\n got: %#v\nwant: %#v", at, got, want)
 		}
-		if got := preparedScreenAt(rec, &plan, &prepared, options, at); !reflect.DeepEqual(got, want) {
+		if got := preparedScreenAt(rec, plan, &prepared, *options, at); !reflect.DeepEqual(got, want) {
 			t.Fatalf("prepared screen at %v differs\n got: %#v\nwant: %#v", at, got, want)
 		}
 		gotCursor := visibleCursor(timelineStateAt(plan.cursor, at))
@@ -252,7 +275,7 @@ func preparedScreenAt(
 	options Options,
 	at time.Duration,
 ) semanticScreen {
-	rows := slices.Clone(plan.staticRows)
+	rows := append(slices.Clone(plan.staticRows), plan.layerRowsAt(at)...)
 	if options.Layout != LayoutBands && options.Layout != LayoutRegions && options.Layout != LayoutScroll {
 		_, states := contentKeyframesFor(plan.content)
 		state := rowsStateIndex(states, timelineStateAt(plan.content, at))

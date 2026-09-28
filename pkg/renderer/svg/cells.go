@@ -12,6 +12,10 @@ type terminalCell struct {
 	attrs ir.CellAttrs
 }
 
+// maxInertGap is the longest run of inert spaces that is cheaper to keep
+// inside one text element than to close it and open another one.
+const maxInertGap = 28
+
 // hoistStaticCells extracts cell spans that remain visually identical for the
 // complete recording. Whole-row hoisting runs first; this pass handles rows
 // where labels, borders, and separators are static around a changing value.
@@ -113,19 +117,34 @@ func cellVisualEqual(a, b terminalCell, colors *color.Catalog) bool {
 	return a == b
 }
 
+// cellsToRow builds a row from the included visible cells. Included cells with
+// equal attributes that are separated only by a short gap of inert spaces
+// stay in one run, with the gap serialized as spaces, because that is
+// smaller than a second text element and paints identically.
 func cellsToRow(y int, cells []terminalCell, include []bool, colors *color.Catalog) ir.Row {
 	row := ir.Row{Y: y}
+	included := func(col int) bool { return include[col] && cellVisible(cells[col], colors) }
 	for col := 0; col < len(cells); {
-		if !include[col] || !cellVisible(cells[col], colors) {
+		if !included(col) {
 			col++
 			continue
 		}
 		start := col
 		attrs := cells[col].attrs
 		text := make([]rune, 0, 8)
-		for col < len(cells) && include[col] && cellVisible(cells[col], colors) && cells[col].attrs == attrs {
-			text = append(text, cells[col].char)
-			col++
+		for col < len(cells) {
+			if included(col) && cells[col].attrs == attrs {
+				text = append(text, cells[col].char)
+				col++
+				continue
+			}
+			next := inertGapEnd(cells, col, colors)
+			if next < 0 || !colors.IsDefault(attrs.BG) || attrs.Underline || !included(next) || cells[next].attrs != attrs {
+				break
+			}
+			for ; col < next; col++ {
+				text = append(text, ' ')
+			}
 		}
 		row.Runs = append(row.Runs, ir.TextRun{
 			Text:     string(text),
@@ -135,6 +154,19 @@ func cellsToRow(y int, cells []terminalCell, include []bool, colors *color.Catal
 		})
 	}
 	return row
+}
+
+// inertGapEnd returns the column after a gap of at most maxInertGap inert
+// space cells starting at col, or -1 when the gap is empty or too long.
+func inertGapEnd(cells []terminalCell, col int, colors *color.Catalog) int {
+	end := col
+	for end < len(cells) && end-col < maxInertGap && cells[end].char == ' ' && !cellVisible(cells[end], colors) {
+		end++
+	}
+	if end == col || end >= len(cells) || end-col >= maxInertGap {
+		return -1
+	}
+	return end
 }
 
 func replaceRow(rows []ir.Row, replacement ir.Row) []ir.Row {
