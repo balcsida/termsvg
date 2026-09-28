@@ -42,7 +42,8 @@ type layerCandidate struct {
 // layerCandidateSet holds the decoded cell grid the candidates refer to.
 type layerCandidateSet struct {
 	width      int
-	decoded    [][][]terminalCell // [y][state][col]; nil rows could not be decoded
+	decoded    [][][]terminalCell        // [y][state][col]; nil rows could not be decoded
+	runs       map[cellInterval][][2]int // maximal constant runs of every visible cell
 	candidates []*layerCandidate
 }
 
@@ -60,20 +61,29 @@ const (
 	// group wrapper when ordering candidates.
 	layerAnimationBytes = 160
 	// maxMeasuredLayerCandidates bounds the exact measurements per render.
-	maxMeasuredLayerCandidates = 32
+	maxMeasuredLayerCandidates = 64
+	// maxLayerRejections stops the exact trials after this many consecutive
+	// candidates failed to shrink the plan.
+	maxLayerRejections = 16
 	// rowReferenceBytes is the serialized size of a whole-row <use> reference.
 	rowReferenceBytes = len(`<use href="#ab"/>`)
 )
 
-// intervalLayerCandidates finds every cell run that is constant over at least
-// two states but not the whole recording, grouped by interval.
+// intervalLayerCandidates finds every distinct interval over which some cell
+// is constant for at least two states but not the whole recording. A
+// candidate takes every cell that is constant over its interval, including
+// cells whose own constant run is longer, so labels that the moving parts of
+// a screen interrupt at different times still share one layer.
 func (p *renderPlan) intervalLayerCandidates(width, height int, colors *color.Catalog) layerCandidateSet {
 	n := len(p.content.points)
-	set := layerCandidateSet{width: width, decoded: make([][][]terminalCell, height)}
+	set := layerCandidateSet{
+		width: width, decoded: make([][][]terminalCell, height), runs: make(map[cellInterval][][2]int),
+	}
 	if width <= 0 || n < 3 {
 		return set
 	}
 	byInterval := make(map[[2]int]*layerCandidate)
+	cells := make([]cellInterval, 0)
 	for y := range height {
 		states, ok := p.decodeRowStates(y, width)
 		if !ok {
@@ -81,16 +91,26 @@ func (p *renderPlan) intervalLayerCandidates(width, height int, colors *color.Ca
 		}
 		set.decoded[y] = states
 		for col := range width {
+			cell := cellInterval{y: y, col: col}
 			constantCellRuns(states, col, colors, func(from, to int) {
+				if len(set.runs[cell]) == 0 {
+					cells = append(cells, cell)
+				}
+				set.runs[cell] = append(set.runs[cell], [2]int{from, to})
 				key := [2]int{from, to}
-				candidate, ok := byInterval[key]
-				if !ok {
-					candidate = &layerCandidate{from: from, to: to}
+				if _, ok := byInterval[key]; !ok {
+					candidate := &layerCandidate{from: from, to: to}
 					byInterval[key] = candidate
 					set.candidates = append(set.candidates, candidate)
 				}
-				candidate.cells = append(candidate.cells, cellInterval{y: y, col: col})
 			})
+		}
+	}
+	for _, candidate := range set.candidates {
+		for _, cell := range cells {
+			if set.constantOver(cell, candidate.from, candidate.to) {
+				candidate.cells = append(candidate.cells, cell)
+			}
 		}
 	}
 	slices.SortFunc(set.candidates, func(a, b *layerCandidate) int {
@@ -100,6 +120,36 @@ func (p *renderPlan) intervalLayerCandidates(width, height int, colors *color.Ca
 		return a.to - b.to
 	})
 	return set
+}
+
+// constantOver reports whether the cell keeps one visible value over the
+// whole state interval.
+func (set *layerCandidateSet) constantOver(cell cellInterval, from, to int) bool {
+	for _, run := range set.runs[cell] {
+		if run[0] <= from && to <= run[1] {
+			return true
+		}
+	}
+	return false
+}
+
+// uncovered returns the candidate cells that no accepted layer on an
+// intersecting interval has taken yet.
+func (candidate *layerCandidate) uncovered(covered map[cellInterval][][2]int) []cellInterval {
+	cells := make([]cellInterval, 0, len(candidate.cells))
+	for _, cell := range candidate.cells {
+		taken := false
+		for _, interval := range covered[cell] {
+			if interval[0] <= candidate.to && candidate.from <= interval[1] {
+				taken = true
+				break
+			}
+		}
+		if !taken {
+			cells = append(cells, cell)
+		}
+	}
+	return cells
 }
 
 // decodeRowStates decodes row y of every content state into cells.
@@ -240,16 +290,27 @@ func (r *Renderer) selectIntervalLayers(ctx context.Context, rec *ir.Recording, 
 		return candidate.cost.finalBytes, nil
 	}
 	selected := make([]*layerCandidate, 0, len(ranked))
+	covered := make(map[cellInterval][][2]int)
 	best := *base
 	bestBytes, err := measure(&best)
 	if err != nil {
 		return renderPlan{}, err
 	}
-	for _, candidate := range ranked {
+	rejections := 0
+	for _, ranked := range ranked {
 		if err := contextErr(ctx); err != nil {
 			return renderPlan{}, err
 		}
-		trial := base.withIntervalLayers(&set, append(slices.Clone(selected), candidate), rec.Colors)
+		if rejections >= maxLayerRejections {
+			break
+		}
+		// Cells an accepted layer already hoists on an overlapping interval
+		// belong to that layer; the candidate keeps the rest.
+		candidate := *ranked
+		if candidate.cells = ranked.uncovered(covered); len(candidate.cells) == 0 {
+			continue
+		}
+		trial := base.withIntervalLayers(&set, append(slices.Clone(selected), &candidate), rec.Colors)
 		bytes, err := measure(&trial)
 		if err != nil {
 			return renderPlan{}, err
@@ -258,9 +319,15 @@ func (r *Renderer) selectIntervalLayers(ctx context.Context, rec *ir.Recording, 
 			log.Printf("[SVG] interval layer states=%d..%d cells=%d estimate=%d measured=%d accepted=%t",
 				candidate.from, candidate.to, len(candidate.cells), candidate.estimate, bestBytes-bytes, bytes < bestBytes)
 		}
-		if bytes < bestBytes {
-			selected = append(selected, candidate)
-			best, bestBytes = trial, bytes
+		if bytes >= bestBytes {
+			rejections++
+			continue
+		}
+		rejections = 0
+		selected = append(selected, &candidate)
+		best, bestBytes = trial, bytes
+		for _, cell := range candidate.cells {
+			covered[cell] = append(covered[cell], [2]int{candidate.from, candidate.to})
 		}
 	}
 	return best, nil
