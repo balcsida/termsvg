@@ -957,7 +957,9 @@ func TestCollectRows_AccountsForAAIDLength(t *testing.T) {
 	rec.Frames[1].Time = time.Second
 	rec.Frames[2].Time = 2 * time.Second
 	rec.Duration = 2 * time.Second
-	c := &canvas{rec: rec, config: *renderer.DefaultConfig()}
+	// The two identical states would also be shared as row blocks, which
+	// replaces the references this measurement inspects.
+	c := &canvas{rec: rec, config: *renderer.DefaultConfig(), options: Options{withoutBlockSharing: true}}
 
 	plan := buildRenderPlan(rec, false)
 	c.plan = plan

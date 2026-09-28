@@ -49,10 +49,17 @@ type renderedRow struct {
 	// elements is the number of XML elements in svg. It is zero for rows
 	// constructed without segment sharing, where the row itself is authoritative.
 	elements int
-	// uses lists the shared segment identifiers referenced by svg, in order.
+	// uses lists the shared definitions referenced by svg, in order: segment
+	// identifiers, and for a block the identifiers its covered rows reference.
 	uses []string
 	// inline holds the runs serialized directly when uses is not empty.
 	inline ir.Row
+	// rows holds the rows a shared block covers: the anchor rows of a block
+	// definition, or the rows a block reference replaces. row is rows[0].
+	rows []ir.Row
+	// items holds the rendered rows a block definition's body is made of. It
+	// is nil for a block reference, whose paint is drawn through the definition.
+	items []*renderedRow
 }
 
 type backgroundSpan struct {
@@ -102,12 +109,29 @@ const (
 var svgTextEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
 
 // paintRow returns the runs whose paint is serialized by this row itself,
-// excluding runs that are drawn through shared segment references.
+// excluding runs that are drawn through shared references. Block entries
+// paint several rows or none; paintRows lists them.
 func (r *renderedRow) paintRow() ir.Row {
-	if len(r.uses) > 0 {
+	if len(r.uses) > 0 || len(r.rows) > 0 {
 		return r.inline
 	}
 	return r.row
+}
+
+// paintRows returns every row whose paint this entry serializes itself: the
+// inline items of a block definition, nothing for a block reference, and the
+// paint row of any other entry.
+func (r *renderedRow) paintRows() []ir.Row {
+	if len(r.rows) == 0 {
+		return []ir.Row{r.paintRow()}
+	}
+	rows := make([]ir.Row, 0, len(r.items))
+	for _, item := range r.items {
+		if item.id == "" {
+			rows = append(rows, item.paintRow())
+		}
+	}
+	return rows
 }
 
 func (a *xmlIDAllocator) allocate() string {
@@ -780,6 +804,11 @@ func (c *canvas) collectRowsWithHash(
 		}
 	}
 
+	// Recurring groups of consecutive rows are shared last, measured against
+	// the references and markup chosen above.
+	if !c.options.withoutBlockSharing {
+		frames, defs = c.shareRowBlocks(frames, defs, ids)
+	}
 	return frames, defs
 }
 

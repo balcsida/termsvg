@@ -60,7 +60,9 @@ func promptRecording() *ir.Recording {
 func TestSegmentSharingFactorsRepeatedPromptPrefix(t *testing.T) {
 	rec := promptRecording()
 	var buf bytes.Buffer
-	if err := New(renderer.DefaultConfig()).Render(context.Background(), rec, &buf); err != nil {
+	// The last two states also recur as a row block; this test inspects the
+	// segment references of the rows themselves.
+	if err := New(renderer.DefaultConfig(), withoutBlockSharing).Render(context.Background(), rec, &buf); err != nil {
 		t.Fatalf("Render() error = %v", err)
 	}
 	svg := buf.String()
@@ -215,7 +217,10 @@ func TestSegmentSharingRejectsUnprofitableFragments(t *testing.T) {
 
 func TestSegmentSavingsUseExactMarkupBytes(t *testing.T) {
 	rec := promptRecording()
-	c := &canvas{rec: rec, config: *renderer.DefaultConfig(), classNames: rec.Colors.GenerateClassNames()}
+	c := &canvas{
+		rec: rec, config: *renderer.DefaultConfig(), classNames: rec.Colors.GenerateClassNames(),
+		options: Options{withoutBlockSharing: true},
+	}
 	c.plan = buildRenderPlan(rec, false)
 	_, states := c.contentKeyframes()
 	frames, defs := c.collectRows(states)

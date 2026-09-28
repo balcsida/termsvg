@@ -33,6 +33,9 @@ type Options struct {
 	Primitives    PrimitiveMode
 	// MaxFPS limits SVG timeline samples. Zero preserves every source state.
 	MaxFPS int
+	// withoutBlockSharing keeps recurring row groups inline. Tests use it to
+	// measure what block sharing saves.
+	withoutBlockSharing bool
 }
 
 // Option updates SVG renderer options.

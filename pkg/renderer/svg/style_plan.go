@@ -98,14 +98,19 @@ func (c *canvas) countPaintOccurrences(content *preparedContent) paintOccurrence
 	for _, row := range c.plan.staticRows {
 		visit(row)
 	}
+	visitPainted := func(row *renderedRow) {
+		for _, painted := range row.paintRows() {
+			visit(painted)
+		}
+	}
 	for _, row := range content.rowDefs {
-		visit(row.paintRow())
+		visitPainted(row)
 	}
 	visitRows := func(states [][]*renderedRow) {
 		for _, rows := range states {
 			for _, row := range rows {
 				if row.id == "" {
-					visit(row.paintRow())
+					visitPainted(row)
 				}
 			}
 		}

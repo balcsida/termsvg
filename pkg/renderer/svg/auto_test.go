@@ -171,11 +171,14 @@ func TestRuntimeSelectionRejectsMeasuredHrefExpansion(t *testing.T) {
 	rec := parityRecording(24, 24, states)
 	config := renderer.DefaultConfig()
 	config.Minify = true
-	frameMetrics, err := New(config, WithLayout(LayoutFrames), WithAnimation(AnimationSMIL), WithFrameSwitch(FrameSwitchHref)).MeasureCandidate(context.Background(), rec)
+	// The staircase recurs as row blocks, which makes the frames layout the
+	// smaller one; the fixture exposes href expansion without them.
+	withoutBlocks := func(o *Options) { o.withoutBlockSharing = true }
+	frameMetrics, err := New(config, WithLayout(LayoutFrames), WithAnimation(AnimationSMIL), WithFrameSwitch(FrameSwitchHref), withoutBlocks).MeasureCandidate(context.Background(), rec)
 	if err != nil {
 		t.Fatal(err)
 	}
-	bandMetrics, err := New(config, WithLayout(LayoutBands), WithAnimation(AnimationSMIL), WithFrameSwitch(FrameSwitchHref)).MeasureCandidate(context.Background(), rec)
+	bandMetrics, err := New(config, WithLayout(LayoutBands), WithAnimation(AnimationSMIL), WithFrameSwitch(FrameSwitchHref), withoutBlocks).MeasureCandidate(context.Background(), rec)
 	if err != nil {
 		t.Fatal(err)
 	}

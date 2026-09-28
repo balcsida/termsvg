@@ -76,7 +76,9 @@ func TestIntervalLayersHoistCellsConstantOverStateRuns(t *testing.T) {
 }
 
 func TestIntervalLayersPreserveSemanticsAcrossLayouts(t *testing.T) {
-	rec := dashboardRecording(24)
+	// Block sharing already folds every state of this dashboard into one
+	// reference, so the layer needs enough states to pay for itself.
+	rec := dashboardRecording(40)
 	for _, variant := range parityOptions {
 		t.Run(variant.name, func(t *testing.T) {
 			plan := assertLayeredSemanticParity(t, rec, variant.options...)
@@ -93,7 +95,7 @@ func TestIntervalLayersPreserveSemanticsAcrossLayouts(t *testing.T) {
 }
 
 func TestIntervalLayersMetricsMatchSerializedStructure(t *testing.T) {
-	rec := dashboardRecording(24)
+	rec := dashboardRecording(40)
 	for _, variant := range parityOptions {
 		t.Run(variant.name, func(t *testing.T) {
 			config := renderer.DefaultConfig()

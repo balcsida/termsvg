@@ -372,6 +372,14 @@ func (c *canvas) rankLayerCandidates(set *layerCandidateSet) []*layerCandidate {
 
 func (r *layerRanker) rowCost(state, y int) int {
 	for _, rendered := range r.frames[state] {
+		if len(rendered.rows) > 0 {
+			// Rows drawn through a shared block are estimated like whole-row
+			// references: their markup lives in a definition.
+			if slices.ContainsFunc(rendered.rows, func(row ir.Row) bool { return row.Y == y }) {
+				return rowReferenceBytes
+			}
+			continue
+		}
 		if rendered.row.Y != y {
 			continue
 		}

@@ -344,15 +344,23 @@ func rowsStateIndex(states [][]ir.Row, target []ir.Row) int {
 	return -1
 }
 
+// renderedRows reconstructs the screen rows a state serializes, expanding
+// block references and definitions to the rows they cover.
 func renderedRows(rows []*renderedRow, x, y int) []ir.Row {
-	out := make([]ir.Row, len(rows))
-	for i, rendered := range rows {
-		out[i] = rendered.row
-		out[i].Y += y
-		out[i].Runs = slices.Clone(out[i].Runs)
-		for j := range out[i].Runs {
-			out[i].Runs[j].StartCol += x
-			out[i].Runs[j].EndCol += x
+	out := make([]ir.Row, 0, len(rows))
+	for _, rendered := range rows {
+		covered := rendered.rows
+		if len(covered) == 0 {
+			covered = []ir.Row{rendered.row}
+		}
+		for _, row := range covered {
+			row.Y += y
+			row.Runs = slices.Clone(row.Runs)
+			for j := range row.Runs {
+				row.Runs[j].StartCol += x
+				row.Runs[j].EndCol += x
+			}
+			out = append(out, row)
 		}
 	}
 	return out
