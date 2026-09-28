@@ -282,8 +282,21 @@ func (r *Renderer) selectIntervalLayers(ctx context.Context, rec *ir.Recording, 
 		ranked = ranked[:maxMeasuredLayerCandidates]
 	}
 
+	return r.trialIntervalLayers(ctx, rec, base, &set, ranked, &probe)
+}
+
+// trialIntervalLayers accepts ranked candidates one at a time, keeping each
+// only when the exact serialized size of the probe layout shrinks.
+func (r *Renderer) trialIntervalLayers(
+	ctx context.Context,
+	rec *ir.Recording,
+	base *renderPlan,
+	set *layerCandidateSet,
+	ranked []*layerCandidate,
+	probe *Options,
+) (renderPlan, error) {
 	measure := func(plan *renderPlan) (int64, error) {
-		candidate, err := prepareCandidate(ctx, rec, plan, &r.config, probe)
+		candidate, err := prepareCandidate(ctx, rec, plan, &r.config, *probe)
 		if err != nil {
 			return 0, err
 		}
@@ -310,7 +323,7 @@ func (r *Renderer) selectIntervalLayers(ctx context.Context, rec *ir.Recording, 
 		if candidate.cells = ranked.uncovered(covered); len(candidate.cells) == 0 {
 			continue
 		}
-		trial := base.withIntervalLayers(&set, append(slices.Clone(selected), &candidate), rec.Colors)
+		trial := base.withIntervalLayers(set, append(slices.Clone(selected), &candidate), rec.Colors)
 		bytes, err := measure(&trial)
 		if err != nil {
 			return renderPlan{}, err
