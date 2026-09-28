@@ -3,6 +3,7 @@ package svg
 import (
 	"image/color"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -156,5 +157,40 @@ func TestHoistStaticCellsPreservesEveryVisualState(t *testing.T) {
 		if !slices.Equal(got, want) {
 			t.Fatalf("state %d visual cells changed:\n got  %#v\n want %#v", i, got, want)
 		}
+	}
+}
+
+func TestSplitInertGapsCutsLongGapsAndKeepsVisibleSpaces(t *testing.T) {
+	rec := parityRecording(120, 1, nil)
+	palette := termcolor.Standard()
+	bg := rec.Colors.Register(termcolor.FromRGB(30, 40, 50), &palette)
+	gap := strings.Repeat(" ", maxInertGap)
+	short := strings.Repeat(" ", maxInertGap-1)
+
+	row := splitInertGaps(parityRow(0, parityRun("  left"+gap+"right  ", 2, ir.CellAttrs{})), rec.Colors)
+	if len(row.Runs) != 2 || row.Runs[0].Text != "left" || row.Runs[0].StartCol != 4 || row.Runs[0].EndCol != 8 ||
+		row.Runs[1].Text != "right" || row.Runs[1].StartCol != 8+maxInertGap || row.Runs[1].EndCol != 13+maxInertGap {
+		t.Fatalf("long gap split = %#v", row.Runs)
+	}
+	source := parityRun("left"+short+"right", 0, ir.CellAttrs{})
+	if row := splitInertGaps(parityRow(0, source), rec.Colors); len(row.Runs) != 1 || row.Runs[0] != source {
+		t.Fatalf("short gap must keep the source run verbatim: %#v", row.Runs)
+	}
+	unchanged := ir.TextRun{Text: "static", StartCol: 0}
+	if row := splitInertGaps(parityRow(0, unchanged), rec.Colors); len(row.Runs) != 1 || row.Runs[0] != unchanged {
+		t.Fatalf("untouched run must keep its zero EndCol: %#v", row.Runs)
+	}
+	for name, attrs := range map[string]ir.CellAttrs{"background": {BG: bg}, "underline": {Underline: true}} {
+		source := parityRun("left"+gap+"right", 0, attrs)
+		if row := splitInertGaps(parityRow(0, source), rec.Colors); len(row.Runs) != 1 || row.Runs[0] != source {
+			t.Fatalf("%s spaces are visible and must not be split: %#v", name, row.Runs)
+		}
+	}
+	wide := ir.TextRun{Text: "界" + gap + "x", StartCol: 0, EndCol: 2 + maxInertGap + 1}
+	if row := splitInertGaps(parityRow(0, wide), rec.Colors); len(row.Runs) != 1 || row.Runs[0] != wide {
+		t.Fatalf("runs with wide glyphs must stay whole: %#v", row.Runs)
+	}
+	if row := splitInertGaps(parityRow(0, parityRun(gap, 0, ir.CellAttrs{})), rec.Colors); len(row.Runs) != 0 {
+		t.Fatalf("an inert run must disappear: %#v", row.Runs)
 	}
 }

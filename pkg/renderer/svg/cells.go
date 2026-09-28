@@ -156,6 +156,80 @@ func cellsToRow(y int, cells []terminalCell, include []bool, colors *color.Catal
 	return row
 }
 
+// splitInertGaps rewrites the runs of a row so that interior gaps of at least
+// maxInertGap inert spaces become run boundaries and leading or trailing
+// inert spaces are dropped. A gap that long costs at least as much as a
+// second text element, so the row never grows, and the pieces can be interned
+// and shared independently. Runs whose spaces are visible (background colour
+// or underline) or whose runes do not map one-to-one onto cells are kept.
+func splitInertGaps(row ir.Row, colors *color.Catalog) ir.Row {
+	out := ir.Row{Y: row.Y, Runs: make([]ir.TextRun, 0, len(row.Runs))}
+	for _, run := range row.Runs {
+		runes := []rune(run.Text)
+		if !colors.IsDefault(run.Attrs.BG) || run.Attrs.Underline || len(runes) != runEndCol(run)-run.StartCol ||
+			slices.Contains(runes, 0) {
+			out.Runs = append(out.Runs, run)
+			continue
+		}
+		start := 0
+		for start < len(runes) {
+			for start < len(runes) && runes[start] == ' ' {
+				start++
+			}
+			if start == len(runes) {
+				break
+			}
+			end := inertPieceEnd(runes, start)
+			if start == 0 && end == len(runes) {
+				out.Runs = append(out.Runs, run) // unchanged, keep the source run verbatim
+				break
+			}
+			out.Runs = append(out.Runs, ir.TextRun{
+				Text: string(runes[start:end]), StartCol: run.StartCol + start, EndCol: run.StartCol + end, Attrs: run.Attrs,
+			})
+			start = end
+		}
+	}
+	return out
+}
+
+// inertPieceEnd returns the end of the piece starting at start: it extends
+// over gaps shorter than maxInertGap and excludes trailing spaces.
+func inertPieceEnd(runes []rune, start int) int {
+	end := start
+	for end < len(runes) {
+		gap := end
+		for gap < len(runes) && runes[gap] == ' ' {
+			gap++
+		}
+		if gap == len(runes) || gap-end >= maxInertGap {
+			break
+		}
+		end = gap + 1
+	}
+	for end > start && runes[end-1] == ' ' {
+		end--
+	}
+	return end
+}
+
+// splitInertGaps canonicalizes every planned row.
+func (p *renderPlan) splitInertGaps(colors *color.Catalog) {
+	for i := range p.staticRows {
+		p.staticRows[i] = splitInertGaps(p.staticRows[i], colors)
+	}
+	for i := range p.content.points {
+		rows := make([]ir.Row, 0, len(p.content.points[i].state))
+		for _, row := range p.content.points[i].state {
+			if row = splitInertGaps(row, colors); len(row.Runs) > 0 {
+				rows = append(rows, row)
+			}
+		}
+		p.content.points[i].state = rows
+	}
+	p.content = normalizeTimeline(p.duration, p.content.points, rowsEqual)
+}
+
 // inertGapEnd returns the column after a gap of at most maxInertGap inert
 // space cells starting at col, or -1 when the gap is empty or too long.
 func inertGapEnd(cells []terminalCell, col int, colors *color.Catalog) int {

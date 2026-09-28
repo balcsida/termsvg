@@ -67,6 +67,10 @@ func buildSemanticPlan(
 	if err := contextErr(ctx); err != nil {
 		return semanticPlan{}, err
 	}
+	plan.splitInertGaps(rec.Colors)
+	if err := contextErr(ctx); err != nil {
+		return semanticPlan{}, err
+	}
 
 	if showCursor {
 		cursor := make([]timelinePoint[ir.Cursor], 0, len(rec.Frames))
