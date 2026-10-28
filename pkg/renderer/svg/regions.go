@@ -196,11 +196,13 @@ func (c *canvas) optimizeDynamicRegionsWithBudget(
 			regions = spatial
 		}
 	}
-	return optimizeRegionMergesWithBudget(regions, evaluationBudget, measure, func(candidate []dynamicRegion, i, j int) []dynamicRegion {
+	merge := func(candidate []dynamicRegion, i, j int) []dynamicRegion {
 		return mergeDynamicRegionsFromGrids(&c.plan, grids, candidate, i, j)
-	})
+	}
+	return optimizeRegionMergesWithBudget(regions, evaluationBudget, measure, merge)
 }
 
+//nolint:gocognit // diffs a row's atoms and joins the dynamic runs in one pass
 func spatialDynamicRegions(plan *renderPlan, grids []visualGrid) []dynamicRegion {
 	regions := make([]dynamicRegion, 0)
 	for y := range plan.height {

@@ -217,7 +217,7 @@ func TestPreparedMetricsMatchSerializedStructure(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			candidate, err := prepareCandidate(context.Background(), rec, &plan, config, options)
+			candidate, err := prepareCandidate(context.Background(), rec, &plan, config, &options)
 			if err != nil {
 				t.Fatal(err)
 			}

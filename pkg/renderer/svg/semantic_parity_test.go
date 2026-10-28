@@ -185,7 +185,7 @@ func TestRegionSemanticParityWithBoundedAndUnlimitedOptimization(t *testing.T) {
 			}
 			for _, at := range effectiveTimes(rec) {
 				want := screenFromRows(rec, sourceRowsAt(rec, at), 0, 0)
-				if got := preparedScreenAt(rec, &plan, &prepared, options, at); !reflect.DeepEqual(got, want) {
+				if got := preparedScreenAt(rec, &plan, &prepared, &options, at); !reflect.DeepEqual(got, want) {
 					t.Fatalf("prepared screen at %v differs\n got: %#v\nwant: %#v", at, got, want)
 				}
 			}
@@ -255,7 +255,7 @@ func assertPlanParity(t *testing.T, rec *ir.Recording, config *renderer.Config, 
 		if got := screenFromRows(rec, planned, 0, 0); !reflect.DeepEqual(got, want) {
 			t.Fatalf("planned screen at %v differs\n got: %#v\nwant: %#v", at, got, want)
 		}
-		if got := preparedScreenAt(rec, plan, &prepared, *options, at); !reflect.DeepEqual(got, want) {
+		if got := preparedScreenAt(rec, plan, &prepared, options, at); !reflect.DeepEqual(got, want) {
 			t.Fatalf("prepared screen at %v differs\n got: %#v\nwant: %#v", at, got, want)
 		}
 		gotCursor := visibleCursor(timelineStateAt(plan.cursor, at))
@@ -272,7 +272,7 @@ func preparedScreenAt(
 	rec *ir.Recording,
 	plan *renderPlan,
 	content *preparedContent,
-	options Options,
+	options *Options,
 	at time.Duration,
 ) semanticScreen {
 	rows := append(slices.Clone(plan.staticRows), plan.layerRowsAt(at)...)

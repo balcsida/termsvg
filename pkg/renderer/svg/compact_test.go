@@ -42,7 +42,10 @@ func TestCompactTextRunOmitsBlankUndecoratedRun(t *testing.T) {
 }
 
 func TestCompactXMLIDUsesShortDeterministicNames(t *testing.T) {
-	for index, want := range []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z", "aa", "ab"} {
+	for index, want := range []string{
+		"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n",
+		"o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z", "aa", "ab",
+	} {
 		if got := compactXMLID(index); got != want {
 			t.Fatalf("compactXMLID(%d) = %q; want %q", index, got, want)
 		}

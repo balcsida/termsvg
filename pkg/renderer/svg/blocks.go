@@ -70,7 +70,8 @@ const (
 	maxBlockRows = 12
 )
 
-func (s *blockState) bytes(start, end int) int    { return s.prefixBytes[end] - s.prefixBytes[start] }
+func (s *blockState) bytes(start, end int) int { return s.prefixBytes[end] - s.prefixBytes[start] }
+
 func (s *blockState) elements(start, end int) int { return s.prefixElems[end] - s.prefixElems[start] }
 
 // shareRowBlocks selects profitable block definitions over the per-state row

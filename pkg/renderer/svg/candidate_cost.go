@@ -37,7 +37,12 @@ func (l *candidateCostLedger) add(write func(io.Writer)) {
 
 func (l *candidateCostLedger) addBytes(bytes int64) { l.bytes += bytes }
 
-func costPreparedCandidate(ctx context.Context, _ *ir.Recording, _ *renderer.Config, candidate *preparedCandidate) (int64, error) {
+func costPreparedCandidate(
+	ctx context.Context,
+	_ *ir.Recording,
+	_ *renderer.Config,
+	candidate *preparedCandidate,
+) (int64, error) {
 	if err := contextErr(ctx); err != nil {
 		return 0, err
 	}
@@ -60,7 +65,8 @@ func buildPreparedCandidateCost(c *canvas, candidate *preparedCandidate) prepare
 		ledger.add(func(w io.Writer) { c.w = w; c.writeBackground() })
 	}
 	ledger.add(func(w io.Writer) {
-		fmt.Fprintf(w, `<defs><clipPath id="clip"><rect width="%s" height="%s"/></clipPath>`, c.xmlInt(c.contentWidth()), c.xmlInt(c.contentHeight()))
+		fmt.Fprintf(w, `<defs><clipPath id="clip"><rect width="%s" height="%s"/></clipPath>`,
+			c.xmlInt(c.contentWidth()), c.xmlInt(c.contentHeight()))
 	})
 	ledger.addBytes(candidate.content.cost.definitions)
 	ledger.add(func(w io.Writer) { fmt.Fprint(w, `</defs>`) })
@@ -80,7 +86,10 @@ func buildPreparedCandidateCost(c *canvas, candidate *preparedCandidate) prepare
 	ledger.addBytes(candidate.content.cost.active)
 	ledger.add(func(w io.Writer) { c.w = w; c.writeCursor() })
 	ledger.add(func(w io.Writer) { fmt.Fprint(w, `</g></svg>`) })
-	return preparedCandidateCost{finalBytes: ledger.bytes, fragmentWalks: ledger.fragmentWalks + candidate.content.cost.fragmentWalks}
+	return preparedCandidateCost{
+		finalBytes:    ledger.bytes,
+		fragmentWalks: ledger.fragmentWalks + candidate.content.cost.fragmentWalks,
+	}
 }
 
 func buildPreparedContentCost(c *canvas, content *preparedContent) preparedContentCost {
@@ -105,6 +114,8 @@ func buildPreparedContentCost(c *canvas, content *preparedContent) preparedConte
 		})
 	}
 	regionBytes := int64(len(`<svg><defs>`)+len(`</defs>`)+len(`</svg>`)) + definitions.bytes + styles.bytes + active.bytes
-	return preparedContentCost{definitions: definitions.bytes, styles: styles.bytes, active: active.bytes, regionBytes: regionBytes,
-		fragmentWalks: definitions.fragmentWalks + styles.fragmentWalks + active.fragmentWalks}
+	return preparedContentCost{
+		definitions: definitions.bytes, styles: styles.bytes, active: active.bytes, regionBytes: regionBytes,
+		fragmentWalks: definitions.fragmentWalks + styles.fragmentWalks + active.fragmentWalks,
+	}
 }

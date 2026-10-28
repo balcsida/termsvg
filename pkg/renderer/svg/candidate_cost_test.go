@@ -49,7 +49,7 @@ func TestCandidateCostMatchesSerialization(t *testing.T) {
 						for _, fps := range []int{0, 30} {
 							options := Options{Layout: layout, Animation: mode.animation, FrameSwitch: mode.switcher, MaxFPS: fps}
 							t.Run(fmt.Sprintf("%s-%s-%s-%dfps", layout, mode.animation, mode.switcher, fps), func(t *testing.T) {
-								assertCandidateCostExact(t, rec, config, options)
+								assertCandidateCostExact(t, rec, config, &options)
 							})
 						}
 					}
@@ -75,7 +75,7 @@ func TestCandidateCostMatchesRandomizedRecordings(t *testing.T) {
 		if i%2 == 1 {
 			options.MaxFPS = 30
 		}
-		assertCandidateCostExact(t, rec, config, options)
+		assertCandidateCostExact(t, rec, config, &options)
 	}
 }
 
@@ -93,11 +93,11 @@ func TestCandidateCostMatchesRealCasts(t *testing.T) {
 		config.Minify = i%2 == 0
 		config.ShowWindow = i%3 != 0
 		config.ShowCursor = i%2 != 0
-		assertCandidateCostExact(t, rec, config, modes[i])
+		assertCandidateCostExact(t, rec, config, &modes[i])
 	}
 }
 
-func assertCandidateCostExact(t *testing.T, rec *ir.Recording, config *renderer.Config, options Options) {
+func assertCandidateCostExact(t *testing.T, rec *ir.Recording, config *renderer.Config, options *Options) {
 	t.Helper()
 	if err := options.Validate(); err != nil {
 		t.Fatal(err)
@@ -116,7 +116,8 @@ func assertCandidateCostExact(t *testing.T, rec *ir.Recording, config *renderer.
 	}
 	var out bytes.Buffer
 	r := &Renderer{config: *config}
-	if err := writeFinalSVG(&out, config.Minify, func(w io.Writer) error { return r.serializeCandidate(context.Background(), rec, w, candidate) }); err != nil {
+	serialize := func(w io.Writer) error { return r.serializeCandidate(context.Background(), rec, w, candidate) }
+	if err := writeFinalSVG(&out, config.Minify, serialize); err != nil {
 		t.Fatal(err)
 	}
 	if got != int64(out.Len()) {
@@ -128,7 +129,8 @@ func assertCandidateCostExact(t *testing.T, rec *ir.Recording, config *renderer.
 			normalized := bytes.ReplaceAll(raw.Bytes(), []byte("\u00a0"), []byte(" "))
 			for i := 0; i < min(len(normalized), out.Len()); i++ {
 				if normalized[i] != out.Bytes()[i] {
-					t.Logf("first diff raw=%q min=%q", normalized[max(0, i-40):min(len(normalized), i+80)], out.Bytes()[max(0, i-40):min(out.Len(), i+80)])
+					t.Logf("first diff raw=%q min=%q",
+						normalized[max(0, i-40):min(len(normalized), i+80)], out.Bytes()[max(0, i-40):min(out.Len(), i+80)])
 					break
 				}
 			}
@@ -160,7 +162,8 @@ func TestCandidateComparisonDoesNotWalkSerializationFragments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	candidate, err := prepareCandidate(context.Background(), rec, &plan, config, DefaultOptions())
+	options := DefaultOptions()
+	candidate, err := prepareCandidate(context.Background(), rec, &plan, config, &options)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,13 +185,33 @@ func TestCandidateComparisonDoesNotWalkSerializationFragments(t *testing.T) {
 
 func TestUseExpansionMetricsValues(t *testing.T) {
 	small := &renderedRow{id: "r0", svg: `<text y="20">x</text>`, row: ir.Row{Runs: []ir.TextRun{{Text: "x", EndCol: 1}}}}
-	large := &renderedRow{id: "r1", svg: `<text y="20">x</text><text x="12" y="20">y</text>`, row: ir.Row{Runs: []ir.TextRun{{Text: "x", EndCol: 1}, {Text: "y", StartCol: 1, EndCol: 2}}}}
+	large := &renderedRow{
+		id:  "r1",
+		svg: `<text y="20">x</text><text x="12" y="20">y</text>`,
+		row: ir.Row{Runs: []ir.TextRun{{Text: "x", EndCol: 1}, {Text: "y", StartCol: 1, EndCol: 2}}},
+	}
 	content := preparedContent{rowDefs: []*renderedRow{small, large}, bands: []preparedBand{
-		{stateIDs: []string{"a0", "a1"}, rows: [][]*renderedRow{{small}, {large}}, keyframes: []keyframePoint[int]{{selector: "0%", state: 0}, {selector: "25%", state: 1}, {selector: "100%", state: 1}}},
-		{stateIDs: []string{"b0", "b1"}, rows: [][]*renderedRow{{large}, {small}}, keyframes: []keyframePoint[int]{{selector: "0%", state: 0}, {selector: "75%", state: 1}, {selector: "100%", state: 1}}},
+		{
+			stateIDs: []string{"a0", "a1"},
+			rows:     [][]*renderedRow{{small}, {large}},
+			keyframes: []keyframePoint[int]{
+				{selector: "0%", state: 0}, {selector: "25%", state: 1}, {selector: "100%", state: 1},
+			},
+		},
+		{
+			stateIDs: []string{"b0", "b1"},
+			rows:     [][]*renderedRow{{large}, {small}},
+			keyframes: []keyframePoint[int]{
+				{selector: "0%", state: 0}, {selector: "75%", state: 1}, {selector: "100%", state: 1},
+			},
+		},
 	}}
 	metrics := CandidateMetrics{XMLNodes: 10, ActiveNodes: 5, DefinitionNodes: 5}
-	c := canvas{rec: parityRecording(2, 1, nil), plan: renderPlan{duration: time.Second}, options: Options{Layout: LayoutBands, FrameSwitch: FrameSwitchHref}}
+	c := canvas{
+		rec:     parityRecording(2, 1, nil),
+		plan:    renderPlan{duration: time.Second},
+		options: Options{Layout: LayoutBands, FrameSwitch: FrameSwitchHref},
+	}
 	if err := addUseExpansionMetrics(&metrics, &c, &content); err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +241,11 @@ func TestUseExpansionMetricsCountRetainedStateWrappers(t *testing.T) {
 				content.bands = []preparedBand{{stateIDs: []string{"s0", "s1"}, rows: states, keyframes: keyframes}}
 			}
 			metrics := CandidateMetrics{XMLNodes: 10, ActiveNodes: 4, DefinitionNodes: 6}
-			c := canvas{rec: parityRecording(2, 1, nil), plan: renderPlan{duration: time.Second}, options: Options{Layout: layout, FrameSwitch: FrameSwitchHref}}
+			c := canvas{
+				rec:     parityRecording(2, 1, nil),
+				plan:    renderPlan{duration: time.Second},
+				options: Options{Layout: layout, FrameSwitch: FrameSwitchHref},
+			}
 			if err := addUseExpansionMetrics(&metrics, &c, &content); err != nil {
 				t.Fatal(err)
 			}

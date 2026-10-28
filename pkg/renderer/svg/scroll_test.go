@@ -95,6 +95,7 @@ func TestScrollLayoutRejectsNonScrollTransitions(t *testing.T) {
 	}
 }
 
+//nolint:gocognit // each output check applies to one or both animation backends
 func TestScrollTapeCSSAndSMILEmissionRemainLossless(t *testing.T) {
 	rec := scrollRecording(120, 40, 21)
 	config := renderer.DefaultConfig()
@@ -206,7 +207,7 @@ func TestScrollAndRectTracksChooseStrictSmallestFromSnapshot(t *testing.T) {
 func TestScrollTapeCandidateRestoresSnapshotBandBeforeConversion(t *testing.T) {
 	snapshot := preparedBand{kind: bandSnapshot, width: 4, height: 2, content: timeline[[]ir.Row]{duration: time.Second}}
 	tape := scrollTape{rows: []ir.Row{{Y: 0}}, offsets: []keyframePoint[int]{{state: 0}, {selector: "100%", state: 1}}}
-	got := scrollTapeCandidateBand(snapshot, tape)
+	got := scrollTapeCandidateBand(&snapshot, tape)
 	if got.kind != bandScrollTape || got.track != nil || got.content.duration != snapshot.content.duration || got.tapeHeight != 1 {
 		t.Fatalf("scroll candidate = %#v", got)
 	}
@@ -257,7 +258,7 @@ func TestScrollTapeMetricsAndExactCost(t *testing.T) {
 	if metrics.ScrollTapeCount != 1 || metrics.MaxTapeWidth != 972 || metrics.MaxTapeHeight != 1500 || metrics.MaxTapeArea != 1458000 || metrics.ScrollTransformAnimations != 1 {
 		t.Fatalf("scroll metrics = %#v", metrics)
 	}
-	assertCandidateCostExact(t, rec, config, Options{Layout: LayoutScroll, Animation: AnimationCSS, FrameSwitch: FrameSwitchTranslate, AutoObjective: AutoObjectiveSize, Style: StyleLegacy})
+	assertCandidateCostExact(t, rec, config, &Options{Layout: LayoutScroll, Animation: AnimationCSS, FrameSwitch: FrameSwitchTranslate, AutoObjective: AutoObjectiveSize, Style: StyleLegacy})
 }
 
 func scrollCanvas(rec *ir.Recording, plan *renderPlan, config *renderer.Config) canvas {

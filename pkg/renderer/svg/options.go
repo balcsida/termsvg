@@ -77,7 +77,7 @@ const (
 	PrimitiveRectTracks PrimitiveMode = "rect-tracks"
 )
 
-func (o Options) usesLocalViewports() bool {
+func (o *Options) usesLocalViewports() bool {
 	return o.Layout == LayoutBands || o.Layout == LayoutRegions || o.Layout == LayoutScroll
 }
 
@@ -128,31 +128,33 @@ func WithPrimitiveMode(primitives PrimitiveMode) Option {
 	return func(options *Options) { options.Primitives = primitives }
 }
 
-func (o Options) normalized() Options {
-	if o.Layout == "" {
-		o.Layout = LayoutFrames
+func (o *Options) normalized() Options {
+	n := *o
+	if n.Layout == "" {
+		n.Layout = LayoutFrames
 	}
-	if o.Animation == "" {
-		o.Animation = AnimationCSS
+	if n.Animation == "" {
+		n.Animation = AnimationCSS
 	}
-	if o.FrameSwitch == "" {
-		o.FrameSwitch = FrameSwitchTranslate
+	if n.FrameSwitch == "" {
+		n.FrameSwitch = FrameSwitchTranslate
 	}
-	if o.AutoObjective == "" {
-		o.AutoObjective = AutoObjectiveSize
+	if n.AutoObjective == "" {
+		n.AutoObjective = AutoObjectiveSize
 	}
-	if o.Style == "" {
-		o.Style = StyleLegacy
+	if n.Style == "" {
+		n.Style = StyleLegacy
 	}
-	if o.Primitives == "" {
-		o.Primitives = PrimitiveSnapshots
+	if n.Primitives == "" {
+		n.Primitives = PrimitiveSnapshots
 	}
-	return o
+	return n
 }
 
 // Validate checks SVG-specific options.
-func (o Options) Validate() error {
-	o = o.normalized()
+func (o *Options) Validate() error {
+	normalized := o.normalized()
+	o = &normalized
 	switch o.Layout {
 	case LayoutFrames, LayoutBands, LayoutRegions, LayoutScroll, LayoutAuto:
 	default:

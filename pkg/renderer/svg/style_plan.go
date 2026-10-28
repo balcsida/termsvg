@@ -12,14 +12,6 @@ import (
 
 type styleScheme string
 
-const (
-	styleLegacy             styleScheme = "legacy"
-	styleAtomic             styleScheme = "atomic"
-	styleComposite          styleScheme = "composite"
-	styleInheritedAtomic    styleScheme = "inherited-atomic"
-	styleInheritedComposite styleScheme = "inherited-composite"
-)
-
 type textStyleKey struct {
 	fg                           color.ID
 	bold, italic, underline, dim bool
@@ -71,11 +63,20 @@ type classSpec struct {
 	name         string
 }
 
+const (
+	styleLegacy             styleScheme = "legacy"
+	styleAtomic             styleScheme = "atomic"
+	styleComposite          styleScheme = "composite"
+	styleInheritedAtomic    styleScheme = "inherited-atomic"
+	styleInheritedComposite styleScheme = "inherited-composite"
+)
+
 func (c *canvas) legacyStylePlan() stylePlan {
 	fg := color.RGBAtoHex(c.rec.Colors.DefaultForeground())
 	plan := stylePlan{
-		scheme:       styleLegacy,
-		textBaseRule: fmt.Sprintf("font-family:%s;font-size:%dpx;fill:%s;white-space:pre", c.config.FontFamily, c.config.FontSize, fg),
+		scheme: styleLegacy,
+		textBaseRule: fmt.Sprintf("font-family:%s;font-size:%dpx;fill:%s;white-space:pre",
+			c.config.FontFamily, c.config.FontSize, fg),
 	}
 	if c.plan.cursorEverVisible {
 		plan.cursorRule = "fill:" + fg + ";animation:blink 1s step-end infinite"
@@ -128,6 +129,7 @@ func (c *canvas) countPaintOccurrences(content *preparedContent) paintOccurrence
 	return counts
 }
 
+//nolint:gocognit,funlen // collects each scheme's class candidates and encodes every paint with the chosen names
 func (c *canvas) buildStylePlan(scheme styleScheme, counts paintOccurrences) stylePlan {
 	if scheme == styleLegacy {
 		return c.legacyStylePlan()
@@ -138,11 +140,13 @@ func (c *canvas) buildStylePlan(scheme styleScheme, counts paintOccurrences) sty
 	}
 	inherited := scheme == styleInheritedAtomic || scheme == styleInheritedComposite
 	defaultFill := c.paintHex(c.rec.Colors.DefaultForeground())
-	plan.textBaseRule = fmt.Sprintf("font-family:%s;font-size:%dpx;white-space:pre", c.config.FontFamily, c.config.FontSize)
+	plan.textBaseRule = fmt.Sprintf("font-family:%s;font-size:%dpx;white-space:pre",
+		c.config.FontFamily, c.config.FontSize)
 	if inherited {
 		plan.contentGroupAttributes = ` fill="` + defaultFill + `"`
 	} else {
-		plan.textBaseRule = fmt.Sprintf("font-family:%s;font-size:%dpx;fill:%s;white-space:pre", c.config.FontFamily, c.config.FontSize, defaultFill)
+		plan.textBaseRule = fmt.Sprintf("font-family:%s;font-size:%dpx;fill:%s;white-space:pre",
+			c.config.FontFamily, c.config.FontSize, defaultFill)
 	}
 
 	var specs []*classSpec
@@ -259,8 +263,10 @@ func (c *canvas) buildStylePlan(scheme styleScheme, counts paintOccurrences) sty
 				set  bool
 				name string
 			}{
-				{key.bold, names["attr:bold"]}, {key.italic, names["attr:italic"]},
-				{key.underline, names["attr:underline"]}, {key.dim, names["attr:dim"]},
+				{key.bold, names["attr:bold"]},
+				{key.italic, names["attr:italic"]},
+				{key.underline, names["attr:underline"]},
+				{key.dim, names["attr:dim"]},
 			} {
 				if flag.set {
 					encoding.classes = append(encoding.classes, flag.name)
@@ -313,7 +319,9 @@ func sortedTextKeys(counts map[textStyleKey]int) []textStyleKey {
 	for key := range counts {
 		keys = append(keys, key)
 	}
-	slices.SortFunc(keys, func(a, b textStyleKey) int { return strings.Compare(textStyleSemanticKey(a), textStyleSemanticKey(b)) })
+	slices.SortFunc(keys, func(a, b textStyleKey) int {
+		return strings.Compare(textStyleSemanticKey(a), textStyleSemanticKey(b))
+	})
 	return keys
 }
 
@@ -356,9 +364,8 @@ func textColorOccurrences(counts map[textStyleKey]int, id color.ID) int {
 	return total
 }
 
-func (c *canvas) textDeclarations(key textStyleKey) (string, string) {
+func (c *canvas) textDeclarations(key textStyleKey) (css, attributes string) {
 	declarations := make([]string, 0, 5)
-	attributes := ""
 	if !c.rec.Colors.IsDefault(key.fg) {
 		hex := c.paintHex(c.rec.Colors.Resolved(key.fg))
 		declarations = append(declarations, "fill:"+hex)
@@ -389,9 +396,14 @@ func (c *canvas) paintHex(rgba stdcolor.RGBA) string {
 	return hex
 }
 
-func stylePlanEqual(left, right stylePlan) bool {
-	if left.scheme != right.scheme || left.contentGroupAttributes != right.contentGroupAttributes || left.textBaseRule != right.textBaseRule ||
-		left.cursorRule != right.cursorRule || left.cursorClass != right.cursorClass || len(left.rules) != len(right.rules) || len(left.texts) != len(right.texts) ||
+func stylePlanEqual(left, right *stylePlan) bool {
+	if left.scheme != right.scheme ||
+		left.contentGroupAttributes != right.contentGroupAttributes ||
+		left.textBaseRule != right.textBaseRule ||
+		left.cursorRule != right.cursorRule ||
+		left.cursorClass != right.cursorClass ||
+		len(left.rules) != len(right.rules) ||
+		len(left.texts) != len(right.texts) ||
 		len(left.backgrounds) != len(right.backgrounds) {
 		return false
 	}

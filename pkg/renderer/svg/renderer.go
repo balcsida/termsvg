@@ -266,11 +266,11 @@ func (r *Renderer) prepareSelectedCandidate(
 	plan *semanticPlan,
 ) (*preparedCandidate, error) {
 	if r.options.Layout != LayoutAuto {
-		return prepareCandidate(ctx, rec, plan, &r.config, r.options)
+		return prepareCandidate(ctx, rec, plan, &r.config, &r.options)
 	}
 	options := r.options
 	options.Layout = LayoutFrames
-	frames, err := prepareCandidate(ctx, rec, plan, &r.config, options)
+	frames, err := prepareCandidate(ctx, rec, plan, &r.config, &options)
 	if err != nil {
 		return nil, err
 	}
@@ -278,7 +278,7 @@ func (r *Renderer) prepareSelectedCandidate(
 		return nil, err
 	}
 	options.Layout = LayoutBands
-	bands, err := prepareCandidate(ctx, rec, plan, &r.config, options)
+	bands, err := prepareCandidate(ctx, rec, plan, &r.config, &options)
 	if err != nil {
 		return nil, err
 	}
@@ -286,7 +286,7 @@ func (r *Renderer) prepareSelectedCandidate(
 		return nil, err
 	}
 	options.Layout = LayoutRegions
-	regions, err := prepareCandidate(ctx, rec, plan, &r.config, options)
+	regions, err := prepareCandidate(ctx, rec, plan, &r.config, &options)
 	if err != nil {
 		return nil, err
 	}
@@ -357,7 +357,7 @@ func prepareCandidate(
 	rec *ir.Recording,
 	plan *semanticPlan,
 	config *renderer.Config,
-	options Options,
+	options *Options,
 ) (*preparedCandidate, error) {
 	if options.Style == StyleAuto {
 		legacy, _, err := prepareStyleCandidate(ctx, rec, plan, config, options, styleLegacy)
@@ -386,14 +386,14 @@ func prepareStyleCandidate(
 	rec *ir.Recording,
 	plan *semanticPlan,
 	config *renderer.Config,
-	options Options,
+	options *Options,
 	scheme styleScheme,
 ) (*preparedCandidate, bool, error) {
 	c := &canvas{
 		rec:        rec,
 		plan:       *plan,
 		config:     *config,
-		options:    options,
+		options:    *options,
 		classNames: rec.Colors.GenerateClassNames(),
 	}
 	c.style = stylePlan{scheme: styleLegacy}
@@ -408,7 +408,7 @@ func prepareStyleCandidate(
 		if options.Style == StyleAuto {
 			c.style.occurrences = c.countPaintOccurrences(&content)
 		}
-		candidate, err := finishPreparedCandidate(c, plan, options, content)
+		candidate, err := finishPreparedCandidate(c, plan, options, &content)
 		return candidate, true, err
 	}
 
@@ -422,9 +422,9 @@ func prepareStyleCandidate(
 			return nil, false, err
 		}
 		next := c.buildStylePlan(scheme, c.countPaintOccurrences(&content))
-		if stylePlanEqual(style, next) {
+		if stylePlanEqual(&style, &next) {
 			c.style = next
-			candidate, err := finishPreparedCandidate(c, plan, options, content)
+			candidate, err := finishPreparedCandidate(c, plan, options, &content)
 			return candidate, true, err
 		}
 		style = next
@@ -432,17 +432,27 @@ func prepareStyleCandidate(
 	return nil, false, nil
 }
 
-func finishPreparedCandidate(c *canvas, plan *semanticPlan, options Options, content preparedContent) (*preparedCandidate, error) {
-	candidate := &preparedCandidate{plan: plan, options: options, content: content, style: c.style}
-	addPreparedMetrics(&candidate.metrics, &content, options, c.contentWidth(), c.contentHeight())
-	if err := addStructuralMetrics(&candidate.metrics, c, &content); err != nil {
+func finishPreparedCandidate(
+	c *canvas,
+	plan *semanticPlan,
+	options *Options,
+	content *preparedContent,
+) (*preparedCandidate, error) {
+	candidate := &preparedCandidate{plan: plan, options: *options, content: *content, style: c.style}
+	addPreparedMetrics(&candidate.metrics, content, options, c.contentWidth(), c.contentHeight())
+	if err := addStructuralMetrics(&candidate.metrics, c, content); err != nil {
 		return nil, err
 	}
 	candidate.cost = buildPreparedCandidateCost(c, candidate)
 	return candidate, nil
 }
 
-func attachStyleCostLedger(rec *ir.Recording, plan *semanticPlan, config *renderer.Config, candidate *preparedCandidate) {
+func attachStyleCostLedger(
+	rec *ir.Recording,
+	plan *semanticPlan,
+	config *renderer.Config,
+	candidate *preparedCandidate,
+) {
 	c := &canvas{
 		rec: rec, plan: *plan, config: *config, options: candidate.options,
 		classNames: rec.Colors.GenerateClassNames(), style: candidate.style,
@@ -621,7 +631,8 @@ func (c *canvas) writeWindow() {
 	for i, btnColor := range theme.WindowButtons {
 		btnHex := color.RGBAtoHex(btnColor)
 		x := Padding + i*windowButtonSpacing
-		fmt.Fprintf(c.w, `<circle cx="%s" cy="%s" r="%s" fill="%s"/>`, c.xmlInt(x), c.xmlInt(buttonY), c.xmlInt(windowButtonRadius), btnHex)
+		fmt.Fprintf(c.w, `<circle cx="%s" cy="%s" r="%s" fill="%s"/>`,
+			c.xmlInt(x), c.xmlInt(buttonY), c.xmlInt(windowButtonRadius), btnHex)
 	}
 }
 
@@ -705,7 +716,6 @@ func (c *canvas) writePaintStyles(sb *strings.Builder) {
 			fmt.Fprintf(sb, ".%s{%s}", rule.class, rule.declarations)
 		}
 	}
-
 }
 
 func (c *canvas) visibleColorIDs() []color.ID {
@@ -732,6 +742,7 @@ func (c *canvas) collectRows(contentStates [][]ir.Row) (frames [][]*renderedRow,
 	return c.collectRowsWithHash(contentStates, semanticRowHash)
 }
 
+//nolint:funlen // each sharing stage measures the markup chosen by the one before
 func (c *canvas) collectRowsWithHash(
 	contentStates [][]ir.Row,
 	hash func(ir.Row) uint64,
@@ -880,7 +891,8 @@ func elementIDPrefix(svg string) string {
 	start := svg[:end+1]
 	for _, name := range []string{"rect", "text", "use"} {
 		prefix := "<" + name
-		if strings.HasPrefix(start, prefix) && (len(start) == len(prefix)+1 || start[len(prefix)] == ' ' || start[len(prefix)] == '/') {
+		if strings.HasPrefix(start, prefix) &&
+			(len(start) == len(prefix)+1 || start[len(prefix)] == ' ' || start[len(prefix)] == '/') {
 			if strings.Contains(start, ` id="`) {
 				return ""
 			}
@@ -1057,7 +1069,7 @@ func (c *canvas) writeBand(band *preparedBand) {
 	width := band.width * ColWidth
 	height := band.height * RowHeight
 	x, y := band.x*ColWidth, band.y*RowHeight
-	xAttr, yAttr := fmt.Sprintf(` x="%s"`, c.xmlInt(x)), fmt.Sprintf(` y="%s"`, c.xmlInt(y))
+	xAttr, yAttr := ` x="`+c.xmlInt(x)+`"`, ` y="`+c.xmlInt(y)+`"`
 	if band.kind == bandSnapshot && c.options.FrameSwitch == FrameSwitchHref && len(band.keyframes) > 1 {
 		// An href-switched band has no strip to clip, so the animated use is
 		// placed directly with the band offset instead of a nested viewport.
@@ -1309,12 +1321,13 @@ func (c *canvas) writeTextRun(w io.Writer, run ir.TextRun, rowY int) {
 	y := (rowY*RowHeight + RowHeight) - 5 // baseline offset
 	xAttr := ""
 	if x != 0 {
-		xAttr = fmt.Sprintf(` x="%s"`, c.xmlInt(x))
+		xAttr = ` x="` + c.xmlInt(x) + `"`
 	}
 
 	if c.style.scheme != "" && c.style.scheme != styleLegacy {
 		key := textStyleKey{run.Attrs.FG, run.Attrs.Bold, run.Attrs.Italic, run.Attrs.Underline, run.Attrs.Dim}
-		fmt.Fprintf(w, `<text%s y="%s"%s>%s</text>`, xAttr, c.xmlInt(y), styleAttributes(c.style.texts[key]), svgTextEscaper.Replace(text))
+		fmt.Fprintf(w, `<text%s y="%s"%s>%s</text>`,
+			xAttr, c.xmlInt(y), styleAttributes(c.style.texts[key]), svgTextEscaper.Replace(text))
 		return
 	}
 

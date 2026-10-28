@@ -86,7 +86,10 @@ func TestPaintOccurrencesCountOnlySerializedRows(t *testing.T) {
 		frameRows:     [][]*renderedRow{{def, inline}, {def, inline}},
 		frameStateIDs: []string{"_f0", "_f1"},
 	}
-	c := canvas{rec: experimentalRecording(), plan: renderPlan{staticRows: []ir.Row{{Runs: []ir.TextRun{{Text: "s", EndCol: 1}}}}}}
+	c := canvas{
+		rec:  experimentalRecording(),
+		plan: renderPlan{staticRows: []ir.Row{{Runs: []ir.TextRun{{Text: "s", EndCol: 1}}}}},
+	}
 	counts := c.countPaintOccurrences(&content)
 	if counts.texts[textStyleKey{}] != 2 || counts.texts[textStyleKey{bold: true}] != 2 {
 		t.Fatalf("serialized text occurrences = %#v", counts.texts)
@@ -98,7 +101,11 @@ func TestPreparedStylePlanContainsCandidateScopedRules(t *testing.T) {
 	c := canvas{
 		rec: rec, plan: renderPlan{cursorEverVisible: true}, config: *renderer.DefaultConfig(),
 	}
-	counts := paintOccurrences{texts: map[textStyleKey]int{{bold: true}: 4}, backgrounds: map[termcolor.ID]int{}, cursor: 1}
+	counts := paintOccurrences{
+		texts:       map[textStyleKey]int{{bold: true}: 4},
+		backgrounds: map[termcolor.ID]int{},
+		cursor:      1,
+	}
 	plan := c.buildStylePlan(styleInheritedAtomic, counts)
 	if plan.contentGroupAttributes != ` fill="#FFFFFF"` || plan.textBaseRule == "" || plan.cursorRule == "" ||
 		plan.cursorClass == "" || len(plan.rules) == 0 || len(plan.texts) != 1 {
@@ -139,7 +146,8 @@ func TestFillPruningReconsidersNamesPastZ(t *testing.T) {
 		&classSpec{key: "long", declarations: "fill:#123456", occurrences: 4},
 	)
 	assignClassNames(specs)
-	specs = pruneUnprofitableFillClasses(specs, map[string]int{"short": len(` fill="#000"`), "long": len(` fill="#123456"`)})
+	directBytes := map[string]int{"short": len(` fill="#000"`), "long": len(` fill="#123456"`)}
+	specs = pruneUnprofitableFillClasses(specs, directBytes)
 	names := make(map[string]string, len(specs))
 	for _, spec := range specs {
 		names[spec.key] = spec.name
@@ -159,7 +167,7 @@ func TestAutoStyleCostLedgerMatchesSelectedSerialization(t *testing.T) {
 	}
 	options := DefaultOptions()
 	options.Style = StyleAuto
-	candidate, err := prepareCandidate(context.Background(), rec, &plan, config, options)
+	candidate, err := prepareCandidate(context.Background(), rec, &plan, config, &options)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +209,7 @@ func TestMinifiedAutoStyleCostIsExactAndNoLarger(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		candidate, err := prepareCandidate(context.Background(), rec, &plan, config, options)
+		candidate, err := prepareCandidate(context.Background(), rec, &plan, config, &options)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -15,6 +15,11 @@ import (
 	"github.com/mrmarble/termsvg/pkg/renderer"
 )
 
+type rectState struct {
+	x, width, secondX, secondWidth int
+	alternate                      bool
+}
+
 func TestRectTracksEmitProfitableGrowingBar(t *testing.T) {
 	states := make([]rectState, 24)
 	for i := 1; i < len(states)-1; i++ {
@@ -41,7 +46,10 @@ func TestRectTracksEmitProfitableGrowingBar(t *testing.T) {
 	if err := r.Render(context.Background(), rec, &repeated); err != nil || repeated.String() != got {
 		t.Fatalf("retained output is nondeterministic: %v", err)
 	}
-	for _, want := range []string{`<animate attributeName="x"`, `<animate attributeName="width"`, `calcMode="discrete"`, `fill="freeze"`, `repeatCount="2"`, `keyTimes="0;.04167;.08333`} {
+	for _, want := range []string{
+		`<animate attributeName="x"`, `<animate attributeName="width"`, `calcMode="discrete"`,
+		`fill="freeze"`, `repeatCount="2"`, `keyTimes="0;.04167;.08333`,
+	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("retained bar missing %q: %s", want, got)
 		}
@@ -53,7 +61,8 @@ func TestRectTracksEmitProfitableGrowingBar(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if metrics.RetainedPrimitiveCount != 1 || metrics.GeometryAnimationNodes != 2 || metrics.PaintPropertyAnimationNodes != 0 {
+	if metrics.RetainedPrimitiveCount != 1 || metrics.GeometryAnimationNodes != 2 ||
+		metrics.PaintPropertyAnimationNodes != 0 {
 		t.Fatalf("retained metrics = %#v", metrics)
 	}
 	if !reflect.DeepEqual(rec, before) {
@@ -104,7 +113,8 @@ func TestRectTracksAnimateFillAndKeepTextAboveBackground(t *testing.T) {
 
 func TestRectTracksFallBackOnAmbiguousRectangleIdentity(t *testing.T) {
 	rec := rectTrackRecording(t, []rectState{{width: 8}, {width: 3, secondX: 5, secondWidth: 3}, {width: 8}}, false)
-	r := New(renderer.DefaultConfig(), WithLayout(LayoutRegions), WithAnimation(AnimationSMIL), WithPrimitiveMode(PrimitiveRectTracks))
+	r := New(renderer.DefaultConfig(),
+		WithLayout(LayoutRegions), WithAnimation(AnimationSMIL), WithPrimitiveMode(PrimitiveRectTracks))
 	metrics, err := r.MeasureCandidate(context.Background(), rec)
 	if err != nil {
 		t.Fatal(err)
@@ -143,7 +153,8 @@ func TestRetainedRectEmitsCompleteExactTimelines(t *testing.T) {
 		if width == 0 {
 			return []ir.Row{{Y: 0}}
 		}
-		return []ir.Row{{Y: 0, Runs: []ir.TextRun{{Text: strings.Repeat(" ", width), StartCol: x, EndCol: x + width, Attrs: ir.CellAttrs{BG: bg}}}}}
+		run := ir.TextRun{Text: strings.Repeat(" ", width), StartCol: x, EndCol: x + width, Attrs: ir.CellAttrs{BG: bg}}
+		return []ir.Row{{Y: 0, Runs: []ir.TextRun{run}}}
 	}
 	content := timeline[[]ir.Row]{duration: 4 * time.Second, points: []timelinePoint[[]ir.Row]{
 		{time: 0, state: row(0, 0, red)},
@@ -154,7 +165,8 @@ func TestRetainedRectEmitsCompleteExactTimelines(t *testing.T) {
 	}}
 	c := canvas{
 		rec: &ir.Recording{Colors: catalog}, plan: renderPlan{duration: 4 * time.Second},
-		config: renderer.Config{LoopCount: 2}, classNames: catalog.GenerateClassNames(), style: stylePlan{scheme: styleLegacy},
+		config: renderer.Config{LoopCount: 2}, classNames: catalog.GenerateClassNames(),
+		style: stylePlan{scheme: styleLegacy},
 	}
 	track, _, ok := c.retainedRectCandidate(rowBand{height: 1, content: content})
 	if !ok {
@@ -164,9 +176,12 @@ func TestRetainedRectEmitsCompleteExactTimelines(t *testing.T) {
 	c.w = &out
 	c.writeRetainedRect(&track)
 	for _, want := range []string{
-		`<animate attributeName="x" values="12;12;36;36;36" keyTimes="0;.25;.5;.75;1" calcMode="discrete" dur="4s" repeatCount="2" fill="freeze"/>`,
-		`<animate attributeName="width" values="0;24;48;0;0" keyTimes="0;.25;.5;.75;1" calcMode="discrete" dur="4s" repeatCount="2" fill="freeze"/>`,
-		`<animate attributeName="fill" values="#B41414;#B41414;#1450B4;#1450B4;#1450B4" keyTimes="0;.25;.5;.75;1" calcMode="discrete" dur="4s" repeatCount="2" fill="freeze"/>`,
+		`<animate attributeName="x" values="12;12;36;36;36" keyTimes="0;.25;.5;.75;1" ` +
+			`calcMode="discrete" dur="4s" repeatCount="2" fill="freeze"/>`,
+		`<animate attributeName="width" values="0;24;48;0;0" keyTimes="0;.25;.5;.75;1" ` +
+			`calcMode="discrete" dur="4s" repeatCount="2" fill="freeze"/>`,
+		`<animate attributeName="fill" values="#B41414;#B41414;#1450B4;#1450B4;#1450B4" keyTimes="0;.25;.5;.75;1" ` +
+			`calcMode="discrete" dur="4s" repeatCount="2" fill="freeze"/>`,
 	} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("exact retained timeline missing %s in %s", want, out.String())
@@ -174,13 +189,8 @@ func TestRetainedRectEmitsCompleteExactTimelines(t *testing.T) {
 	}
 }
 
-type rectState struct {
-	x, width, secondX, secondWidth int
-	alternate                      bool
-}
-
-func rectTrackRecording(t testing.TB, states []rectState, text bool) *ir.Recording {
-	t.Helper()
+func rectTrackRecording(tb testing.TB, states []rectState, text bool) *ir.Recording {
+	tb.Helper()
 	catalog := termcolor.NewCatalog(color.RGBA{R: 255, G: 255, B: 255, A: 255}, color.RGBA{A: 255})
 	red := catalog.Register(termcolor.FromRGB(180, 20, 20), nil)
 	blue := catalog.Register(termcolor.FromRGB(20, 80, 180), nil)
@@ -196,14 +206,21 @@ func rectTrackRecording(t testing.TB, states []rectState, text bool) *ir.Recordi
 			if text {
 				value = "42%" + strings.Repeat(" ", max(0, state.width-3))
 			}
-			runs = append(runs, ir.TextRun{Text: value, StartCol: state.x, EndCol: state.x + state.width, Attrs: ir.CellAttrs{BG: bg}})
+			runs = append(runs, ir.TextRun{
+				Text: value, StartCol: state.x, EndCol: state.x + state.width, Attrs: ir.CellAttrs{BG: bg},
+			})
 		}
 		if state.secondWidth > 0 {
-			runs = append(runs, ir.TextRun{Text: strings.Repeat(" ", state.secondWidth), StartCol: state.secondX, EndCol: state.secondX + state.secondWidth, Attrs: ir.CellAttrs{BG: blue}})
+			runs = append(runs, ir.TextRun{
+				Text:     strings.Repeat(" ", state.secondWidth),
+				StartCol: state.secondX, EndCol: state.secondX + state.secondWidth, Attrs: ir.CellAttrs{BG: blue},
+			})
 		}
 		frames[i] = ir.Frame{Time: time.Duration(i) * time.Second, Rows: []ir.Row{{Y: 0, Runs: runs}}}
 	}
-	return &ir.Recording{Width: 32, Height: 1, Duration: time.Duration(len(states)) * time.Second, Frames: frames, Colors: catalog}
+	return &ir.Recording{
+		Width: 32, Height: 1, Duration: time.Duration(len(states)) * time.Second, Frames: frames, Colors: catalog,
+	}
 }
 
 func adjacentRectTrackRecording(t *testing.T) *ir.Recording {

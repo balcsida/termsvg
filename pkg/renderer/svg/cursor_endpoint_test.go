@@ -36,8 +36,11 @@ func TestPruneZeroDwellCursorEndpointPreservesFiniteLoop(t *testing.T) {
 	}
 	for _, loopCount := range []int{-1, 1, 3} {
 		plan := renderPlan{
-			duration:          duration,
-			cursor:            timeline[ir.Cursor]{duration: duration, points: append([]timelinePoint[ir.Cursor](nil), points...)},
+			duration: duration,
+			cursor: timeline[ir.Cursor]{
+				duration: duration,
+				points:   append([]timelinePoint[ir.Cursor](nil), points...),
+			},
 			cursorEverVisible: true,
 		}
 		plan.pruneZeroDwellCursorEndpoint(loopCount)

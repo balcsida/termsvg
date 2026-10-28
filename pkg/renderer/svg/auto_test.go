@@ -63,13 +63,14 @@ func TestPreparedCandidatesShareOneImmutableSemanticPlan(t *testing.T) {
 	before := cloneSemanticPlan(&plan)
 	config := renderer.DefaultConfig()
 
-	frames, err := prepareCandidate(context.Background(), rec, &plan, config, DefaultOptions())
+	frameOptions := DefaultOptions()
+	frames, err := prepareCandidate(context.Background(), rec, &plan, config, &frameOptions)
 	if err != nil {
 		t.Fatal(err)
 	}
 	bandOptions := DefaultOptions()
 	bandOptions.Layout = LayoutBands
-	bands, err := prepareCandidate(context.Background(), rec, &plan, config, bandOptions)
+	bands, err := prepareCandidate(context.Background(), rec, &plan, config, &bandOptions)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -192,7 +192,7 @@ func (c *canvas) prepareScroll(ctx context.Context) (preparedContent, error) {
 			continue
 		}
 		candidateBands := slices.Clone(prepared.bands)
-		candidateBands[i] = scrollTapeCandidateBand(snapshot.bands[i], tape)
+		candidateBands[i] = scrollTapeCandidateBand(&snapshot.bands[i], tape)
 		candidate, err := c.materializeBands(ctx, candidateBands)
 		if err != nil {
 			return preparedContent{}, err
@@ -202,23 +202,24 @@ func (c *canvas) prepareScroll(ctx context.Context) (preparedContent, error) {
 	return prepared, nil
 }
 
-func scrollTapeCandidateBand(snapshot preparedBand, tape scrollTape) preparedBand {
-	snapshot.kind = bandScrollTape
-	snapshot.tapeRaw = tape.rows
-	snapshot.offsets = tape.offsets
-	snapshot.direction = 1
-	snapshot.tapeHeight = len(tape.rows)
-	return snapshot
+func scrollTapeCandidateBand(snapshot *preparedBand, tape scrollTape) preparedBand {
+	band := *snapshot
+	band.kind = bandScrollTape
+	band.tapeRaw = tape.rows
+	band.offsets = tape.offsets
+	band.direction = 1
+	band.tapeHeight = len(tape.rows)
+	return band
 }
 
 func strictSmallestPrepared(candidates ...preparedContent) preparedContent {
-	selected := candidates[0]
-	for _, candidate := range candidates[1:] {
-		if candidate.cost.regionBytes < selected.cost.regionBytes {
-			selected = candidate
+	selected := 0
+	for i := 1; i < len(candidates); i++ {
+		if candidates[i].cost.regionBytes < candidates[selected].cost.regionBytes {
+			selected = i
 		}
 	}
-	return selected
+	return candidates[selected]
 }
 
 // exactBandReplacementDelta is the exact additive change in the complete
@@ -280,6 +281,7 @@ func (c *canvas) prepareLocalViewports(ctx context.Context, bands []rowBand) (pr
 	return prepared, nil
 }
 
+//nolint:funlen // rows, state ids and animation names are allocated across all bands in order
 func (c *canvas) materializeBands(ctx context.Context, bands []preparedBand) (preparedContent, error) {
 	prepared := preparedContent{bands: slices.Clone(bands)}
 	allStates := make([][]ir.Row, 0)

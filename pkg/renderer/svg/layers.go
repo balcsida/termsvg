@@ -296,7 +296,7 @@ func (r *Renderer) trialIntervalLayers(
 	probe *Options,
 ) (renderPlan, error) {
 	measure := func(plan *renderPlan) (int64, error) {
-		candidate, err := prepareCandidate(ctx, rec, plan, &r.config, *probe)
+		candidate, err := prepareCandidate(ctx, rec, plan, &r.config, probe)
 		if err != nil {
 			return 0, err
 		}

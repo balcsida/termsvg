@@ -26,14 +26,14 @@ func TestHrefFrameSwitchRequiresSMIL(t *testing.T) {
 
 func TestWriteSMILHrefUsesOneDiscreteReferenceTimeline(t *testing.T) {
 	var out strings.Builder
-	canvas := canvas{plan: renderPlan{duration: time.Second}}
+	c := canvas{plan: renderPlan{duration: time.Second}}
 	frames := []keyframePoint[int]{
 		{selector: "0%", state: 0},
 		{selector: "50%", state: 1},
 		{selector: "100%", state: 0},
 	}
 
-	canvas.writeSMILHref(&out, frames, []string{"_f0", "_f1"})
+	c.writeSMILHref(&out, frames, []string{"_f0", "_f1"})
 
 	got := out.String()
 	for _, want := range []string{
@@ -54,10 +54,10 @@ func TestWriteSMILHrefUsesOneDiscreteReferenceTimeline(t *testing.T) {
 
 func TestWriteHrefSequenceUsesSingleRuntimeUse(t *testing.T) {
 	var out strings.Builder
-	canvas := canvas{w: &out, plan: renderPlan{duration: time.Second}}
+	c := canvas{w: &out, plan: renderPlan{duration: time.Second}}
 	frames := []keyframePoint[int]{{selector: "0%", state: 1}, {selector: "100%", state: 0}}
 
-	canvas.writeHrefSequence(frames, []string{"_f0", "_f1"}, "")
+	c.writeHrefSequence(frames, []string{"_f0", "_f1"}, "")
 
 	got := out.String()
 	if strings.Count(got, "<use ") != 1 || !strings.HasPrefix(got, `<use href="#_f1">`) {
@@ -66,6 +66,9 @@ func TestWriteHrefSequenceUsesSingleRuntimeUse(t *testing.T) {
 }
 
 func TestWriteStateDefinitionElidesOnlyOneGeneratedChild(t *testing.T) {
+	textRow := func(text, svg string) *renderedRow {
+		return &renderedRow{row: ir.Row{Runs: []ir.TextRun{{Text: text}}}, svg: svg}
+	}
 	tests := []struct {
 		name   string
 		minify bool
@@ -74,18 +77,34 @@ func TestWriteStateDefinitionElidesOnlyOneGeneratedChild(t *testing.T) {
 	}{
 		{name: "empty", rows: nil, want: `<g id="_f0"></g>`},
 		{name: "empty minified", minify: true, rows: nil, want: `<g id="_f0"/>`},
-		{name: "text", rows: []*renderedRow{{row: ir.Row{Runs: []ir.TextRun{{Text: "x"}}}, svg: `<text y="20">x</text>`}}, want: `<text id="_f0" y="20">x</text>`},
-		{name: "rect", rows: []*renderedRow{{row: ir.Row{Runs: []ir.TextRun{{Text: "x"}}}, svg: `<rect y="0" width="12"/>`}}, want: `<rect id="_f0" y="0" width="12"/>`},
-		{name: "multiple", rows: []*renderedRow{{row: ir.Row{Runs: []ir.TextRun{{Text: "x"}}}, svg: `<text>x</text>`}, {row: ir.Row{Runs: []ir.TextRun{{Text: "y"}}}, svg: `<text>y</text>`}}, want: `<g id="_f0"><text>x</text><text>y</text></g>`},
+		{name: "text", rows: []*renderedRow{textRow("x", `<text y="20">x</text>`)}, want: `<text id="_f0" y="20">x</text>`},
+		{
+			name: "rect",
+			rows: []*renderedRow{textRow("x", `<rect y="0" width="12"/>`)},
+			want: `<rect id="_f0" y="0" width="12"/>`,
+		},
+		{
+			name: "multiple",
+			rows: []*renderedRow{textRow("x", `<text>x</text>`), textRow("y", `<text>y</text>`)},
+			want: `<g id="_f0"><text>x</text><text>y</text></g>`,
+		},
 		{name: "row use", rows: []*renderedRow{{id: "a"}}, want: `<use id="_f0" href="#a"/>`},
-		{name: "existing child id", rows: []*renderedRow{{row: ir.Row{Runs: []ir.TextRun{{Text: "x"}}}, svg: `<text id="row">x</text>`}}, want: `<g id="_f0"><text id="row">x</text></g>`},
-		{name: "existing child id minified", minify: true, rows: []*renderedRow{{row: ir.Row{Runs: []ir.TextRun{{Text: "x"}}}, svg: `<text id="row">x</text>`}}, want: `<g id="_f0"><text id="row">x</text></g>`},
+		{
+			name: "existing child id",
+			rows: []*renderedRow{textRow("x", `<text id="row">x</text>`)},
+			want: `<g id="_f0"><text id="row">x</text></g>`,
+		},
+		{
+			name: "existing child id minified", minify: true,
+			rows: []*renderedRow{textRow("x", `<text id="row">x</text>`)},
+			want: `<g id="_f0"><text id="row">x</text></g>`,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var out strings.Builder
-			canvas := canvas{w: &out, rec: createTestRecording(), config: renderer.Config{Minify: tt.minify}}
-			canvas.writeStateDefinition("_f0", tt.rows)
+			c := canvas{w: &out, rec: createTestRecording(), config: renderer.Config{Minify: tt.minify}}
+			c.writeStateDefinition("_f0", tt.rows)
 			if got := out.String(); got != tt.want {
 				t.Fatalf("state definition = %q; want %q", got, tt.want)
 			}
@@ -96,8 +115,10 @@ func TestWriteStateDefinitionElidesOnlyOneGeneratedChild(t *testing.T) {
 func TestSingleChildStateElisionSavesExactBytes(t *testing.T) {
 	const before = `<g id="_f0"><text y="20">x</text></g>`
 	var out strings.Builder
-	canvas := canvas{w: &out, rec: createTestRecording()}
-	canvas.writeStateDefinition("_f0", []*renderedRow{{row: ir.Row{Runs: []ir.TextRun{{Text: "x"}}}, svg: `<text y="20">x</text>`}})
+	c := canvas{w: &out, rec: createTestRecording()}
+	c.writeStateDefinition("_f0", []*renderedRow{
+		{row: ir.Row{Runs: []ir.TextRun{{Text: "x"}}}, svg: `<text y="20">x</text>`},
+	})
 	if delta := len(before) - out.Len(); delta != 7 {
 		t.Fatalf("single-child state byte delta = %d; want 7", delta)
 	}

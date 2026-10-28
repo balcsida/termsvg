@@ -51,10 +51,25 @@ type CandidateMetrics struct {
 	PeakLiveNodeEstimate                  uint64
 }
 
+type definitionNode struct {
+	nodes uint64
+	uses  []string
+}
+
+type hrefMetricPoint struct {
+	time time.Duration
+	cost uint64
+}
+
+type hrefMetricSeries struct {
+	points   []hrefMetricPoint
+	switches uint64
+}
+
 func addPreparedMetrics(
 	metrics *CandidateMetrics,
 	content *preparedContent,
-	options Options,
+	options *Options,
 	contentWidth, contentHeight int,
 ) {
 	metrics.StateDefinitions = ownedStateDefinitions(content.frameStateIDs, content.frameRows)
@@ -109,6 +124,7 @@ func addTranslatedSurface(metrics *CandidateMetrics, width, height, states int) 
 	metrics.MaxTranslatedArea = max(metrics.MaxTranslatedArea, translatedWidth*int64(height))
 }
 
+//nolint:gocognit,funlen // counts elements in the order the serializer writes them
 func addStructuralMetrics(metrics *CandidateMetrics, c *canvas, content *preparedContent) error {
 	addMetric(metrics, false, "svg", 1)
 	addMetric(metrics, false, "rect", 1)
@@ -188,12 +204,11 @@ func addStructuralMetrics(metrics *CandidateMetrics, c *canvas, content *prepare
 	return addUseExpansionMetrics(metrics, c, content)
 }
 
-type definitionNode struct {
-	nodes uint64
-	uses  []string
-}
-
-func recursiveDefinitionCost(graph map[string]definitionNode, id string, visiting map[string]bool) (uint64, int, error) {
+func recursiveDefinitionCost(
+	graph map[string]definitionNode,
+	id string,
+	visiting map[string]bool,
+) (cost uint64, depth int, err error) {
 	if visiting[id] {
 		return 0, 0, fmt.Errorf("cyclic SVG use definition %q", id)
 	}
@@ -202,7 +217,7 @@ func recursiveDefinitionCost(graph map[string]definitionNode, id string, visitin
 		return 0, 0, fmt.Errorf("unknown SVG use definition %q", id)
 	}
 	visiting[id] = true
-	cost, depth := node.nodes, 1
+	cost, depth = node.nodes, 1
 	for _, target := range node.uses {
 		nested, nestedDepth, err := recursiveDefinitionCost(graph, target, visiting)
 		if err != nil {
@@ -221,6 +236,7 @@ func saturatingAdd(a, b uint64) uint64 {
 	}
 	return a + b
 }
+
 func saturatingMul(a, b uint64) uint64 {
 	if a != 0 && b > math.MaxUint64/a {
 		return math.MaxUint64
@@ -228,6 +244,7 @@ func saturatingMul(a, b uint64) uint64 {
 	return a * b
 }
 
+//nolint:gocognit,funlen // both expansion modes read the use graph built here
 func addUseExpansionMetrics(metrics *CandidateMetrics, c *canvas, content *preparedContent) error {
 	metrics.SourceActiveNodes, metrics.SourceDefinitionNodes = metrics.ActiveNodes, metrics.DefinitionNodes
 	graph := make(map[string]definitionNode)
@@ -252,6 +269,7 @@ func addUseExpansionMetrics(metrics *CandidateMetrics, c *canvas, content *prepa
 	stateNode := func(rows []*renderedRow) definitionNode {
 		nodes, uses := rowUses(rows)
 		children := saturatingAdd(nodes, uint64(len(uses)))
+		//nolint:gosec // boolInt returns 0 or 1.
 		return definitionNode{nodes: saturatingAdd(children, uint64(boolInt(c.stateNeedsWrapper(rows)))), uses: uses}
 	}
 	for i, id := range content.frameStateIDs {
@@ -288,7 +306,7 @@ func addUseExpansionMetrics(metrics *CandidateMetrics, c *canvas, content *prepa
 		}
 	}
 	metrics.StaticUseShadowNodes = definitionShadow
-	initial, peak, weighted, switches := uint64(0), uint64(0), uint64(0), uint64(0)
+	var initial, peak, weighted, switches uint64
 	if c.options.FrameSwitch == FrameSwitchHref {
 		series := make([]hrefMetricSeries, 0, len(content.bands)+1)
 		if len(content.frameStateIDs) > 0 {
@@ -321,24 +339,22 @@ func addUseExpansionMetrics(metrics *CandidateMetrics, c *canvas, content *prepa
 	metrics.InitialAnimatedUseShadowNodes, metrics.PeakAnimatedUseShadowNodes = initial, peak
 	metrics.UseTargetSwitches = switches
 	shadows := saturatingAdd(definitionShadow, peak)
-	metrics.PeakInstantiatedNodes = saturatingAdd(uint64(metrics.XMLNodes), shadows)
-	metrics.PeakLiveNodeEstimate = saturatingAdd(uint64(metrics.ActiveNodes), peak)
+	//nolint:gosec // node counts are non-negative.
+	xmlNodes, activeNodes := uint64(metrics.XMLNodes), uint64(metrics.ActiveNodes)
+	metrics.PeakInstantiatedNodes = saturatingAdd(xmlNodes, shadows)
+	metrics.PeakLiveNodeEstimate = saturatingAdd(activeNodes, peak)
 	duration := uint64(max(time.Duration(0), c.plan.duration))
-	base := saturatingAdd(uint64(metrics.XMLNodes), definitionShadow)
+	base := saturatingAdd(xmlNodes, definitionShadow)
 	metrics.DurationWeightedInstantiatedNodeNanos = saturatingAdd(saturatingMul(base, duration), weighted)
 	return nil
 }
 
-type hrefMetricPoint struct {
-	time time.Duration
-	cost uint64
-}
-type hrefMetricSeries struct {
-	points   []hrefMetricPoint
-	switches uint64
-}
-
-func newHrefMetricSeries(frames []keyframePoint[int], ids []string, duration time.Duration, expand func(string) uint64) hrefMetricSeries {
+func newHrefMetricSeries(
+	frames []keyframePoint[int],
+	ids []string,
+	duration time.Duration,
+	expand func(string) uint64,
+) hrefMetricSeries {
 	series := hrefMetricSeries{points: make([]hrefMetricPoint, 0, len(frames))}
 	lastState := -1
 	for _, frame := range frames {
@@ -349,12 +365,18 @@ func newHrefMetricSeries(frames []keyframePoint[int], ids []string, duration tim
 			series.switches++
 		}
 		lastState = frame.state
-		series.points = append(series.points, hrefMetricPoint{time: keyframeSelectorTime(frame.selector, duration), cost: expand(ids[frame.state])})
+		series.points = append(series.points, hrefMetricPoint{
+			time: keyframeSelectorTime(frame.selector, duration),
+			cost: expand(ids[frame.state]),
+		})
 	}
 	return series
 }
 
-func combineHrefMetricSeries(series []hrefMetricSeries, duration time.Duration) (initial, peak, weighted, switches uint64) {
+func combineHrefMetricSeries(
+	series []hrefMetricSeries,
+	duration time.Duration,
+) (initial, peak, weighted, switches uint64) {
 	boundaries := []time.Duration{0, duration}
 	for _, sequence := range series {
 		switches = saturatingAdd(switches, sequence.switches)
@@ -415,6 +437,7 @@ func boolInt(value bool) int {
 	}
 	return 0
 }
+
 func bandRows(bands []preparedBand) [][][]*renderedRow {
 	out := make([][][]*renderedRow, len(bands))
 	for i := range bands {

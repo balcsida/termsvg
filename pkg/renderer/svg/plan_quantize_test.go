@@ -18,7 +18,7 @@ func TestBuildRenderPlanQuantizesContentAndCursorIndependently(t *testing.T) {
 	}}
 	options := DefaultOptions()
 	options.MaxFPS = 2
-	plan := buildRenderPlanWithOptions(rec, true, options)
+	plan := buildRenderPlanWithOptions(rec, true, &options)
 
 	if len(plan.content.points) != 3 || plan.content.points[1].time != 500*time.Millisecond ||
 		plan.content.points[1].state[0].Runs[0].Text != "c" {

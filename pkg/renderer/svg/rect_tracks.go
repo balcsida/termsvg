@@ -117,10 +117,10 @@ func (c *canvas) writeRetainedRect(track *retainedRectTrack) {
 	}
 	fmt.Fprintf(c.w, `<rect%s%s y="0" width="%s" height="%s">`, paint, x, c.xmlInt(initialWidth), c.xmlInt(RowHeight))
 	if timelineChanges(track.x) {
-		writeRetainedRectAnimation(c, c.w, "x", track.x, func(value int) string { return strconv.Itoa(value) })
+		writeRetainedRectAnimation(c, c.w, "x", track.x, strconv.Itoa)
 	}
 	if timelineChanges(track.width) {
-		writeRetainedRectAnimation(c, c.w, "width", track.width, func(value int) string { return strconv.Itoa(value) })
+		writeRetainedRectAnimation(c, c.w, "width", track.width, strconv.Itoa)
 	}
 	if track.fillChanges() {
 		writeRetainedRectAnimation(c, c.w, "fill", track.fill, func(value color.ID) string {
@@ -130,7 +130,13 @@ func (c *canvas) writeRetainedRect(track *retainedRectTrack) {
 	fmt.Fprint(c.w, `</rect>`)
 }
 
-func writeRetainedRectAnimation[T any](c *canvas, w io.Writer, name string, points []keyframePoint[T], format func(T) string) {
+func writeRetainedRectAnimation[T any](
+	c *canvas,
+	w io.Writer,
+	name string,
+	points []keyframePoint[T],
+	format func(T) string,
+) {
 	values := make([]string, len(points))
 	for i, point := range points {
 		values[i] = format(point.state)

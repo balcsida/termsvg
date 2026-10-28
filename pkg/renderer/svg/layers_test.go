@@ -110,7 +110,7 @@ func TestIntervalLayersMetricsMatchSerializedStructure(t *testing.T) {
 			if len(plan.layers) == 0 {
 				t.Fatal("no interval layer selected")
 			}
-			candidate, err := prepareCandidate(context.Background(), rec, &plan, config, options)
+			candidate, err := prepareCandidate(context.Background(), rec, &plan, config, &options)
 			if err != nil {
 				t.Fatal(err)
 			}

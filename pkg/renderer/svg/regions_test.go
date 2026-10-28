@@ -56,7 +56,8 @@ func TestBuildDynamicRegionsSplitsAdjacentDistinctSchedules(t *testing.T) {
 		},
 	}}
 
-	if got := regionBounds(buildDynamicRegions(&plan, testCatalog())); !reflect.DeepEqual(got, [][4]int{{0, 0, 1, 1}, {1, 0, 1, 1}}) {
+	got := regionBounds(buildDynamicRegions(&plan, testCatalog()))
+	if !reflect.DeepEqual(got, [][4]int{{0, 0, 1, 1}, {1, 0, 1, 1}}) {
 		t.Fatalf("region bounds = %#v; want adjacent schedules split", got)
 	}
 }
@@ -92,7 +93,8 @@ func TestBuildDynamicRegionsDoesNotBisectWideGlyphFootprint(t *testing.T) {
 
 func TestOverBudgetSpatialSelectionKeepsVisualAtomsIndivisible(t *testing.T) {
 	rows := func(pattern string) []ir.Row {
-		out := []ir.Row{{Runs: []ir.TextRun{{Text: "X", EndCol: 1}}}}
+		out := make([]ir.Row, 0, 21)
+		out = append(out, ir.Row{Runs: []ir.TextRun{{Text: "X", EndCol: 1}}})
 		for y := 2; y < 22; y++ {
 			out = append(out, ir.Row{Y: y, Runs: []ir.TextRun{{Text: pattern, EndCol: 20}}})
 		}
@@ -185,8 +187,12 @@ func TestRegionMergeDecisionsMatchFullSerializationOracle(t *testing.T) {
 	plan := renderPlan{duration: time.Second, width: 12, height: 1, content: timeline[[]ir.Row]{
 		duration: time.Second,
 		points: []timelinePoint[[]ir.Row]{
-			{state: []ir.Row{{Y: 0, Runs: []ir.TextRun{{Text: "a", StartCol: 1, EndCol: 2}, {Text: "b", StartCol: 5, EndCol: 6}, {Text: "c", StartCol: 9, EndCol: 10}}}}},
-			{time: time.Second, state: []ir.Row{{Y: 0, Runs: []ir.TextRun{{Text: "A", StartCol: 1, EndCol: 2}, {Text: "B", StartCol: 5, EndCol: 6}, {Text: "C", StartCol: 9, EndCol: 10}}}}},
+			{state: []ir.Row{{Y: 0, Runs: []ir.TextRun{
+				{Text: "a", StartCol: 1, EndCol: 2}, {Text: "b", StartCol: 5, EndCol: 6}, {Text: "c", StartCol: 9, EndCol: 10},
+			}}}},
+			{time: time.Second, state: []ir.Row{{Y: 0, Runs: []ir.TextRun{
+				{Text: "A", StartCol: 1, EndCol: 2}, {Text: "B", StartCol: 5, EndCol: 6}, {Text: "C", StartCol: 9, EndCol: 10},
+			}}}},
 		},
 	}}
 	for _, minify := range []bool{false, true} {
@@ -197,8 +203,10 @@ func TestRegionMergeDecisionsMatchFullSerializationOracle(t *testing.T) {
 		} {
 			config := renderer.DefaultConfig()
 			config.Minify = minify
-			c := canvas{rec: parityRecording(12, 1, nil), plan: plan, config: *config, options: options,
-				classNames: testCatalog().GenerateClassNames(), metrics: &CandidateMetrics{}}
+			c := canvas{
+				rec: parityRecording(12, 1, nil), plan: plan, config: *config, options: options,
+				classNames: testCatalog().GenerateClassNames(), metrics: &CandidateMetrics{},
+			}
 			c.rec.Colors = testCatalog()
 			regions := buildDynamicRegions(&plan, c.rec.Colors)
 			additive, err := c.optimizeDynamicRegions(context.Background(), regions)

@@ -115,7 +115,8 @@ func BenchmarkRetainedBackgroundTracks(b *testing.B) {
 	}(), false)
 	for _, primitives := range []PrimitiveMode{PrimitiveSnapshots, PrimitiveRectTracks} {
 		b.Run(string(primitives), func(b *testing.B) {
-			benchmarkScrollCandidate(b, rec, WithLayout(LayoutRegions), WithAnimation(AnimationSMIL), WithPrimitiveMode(primitives))
+			benchmarkScrollCandidate(b, rec,
+				WithLayout(LayoutRegions), WithAnimation(AnimationSMIL), WithPrimitiveMode(primitives))
 		})
 	}
 }
@@ -221,7 +222,7 @@ func benchmarkPreparation(b *testing.B, layout LayoutMode) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for range b.N {
-		if _, err := prepareCandidate(context.Background(), rec, &plan, config, options); err != nil {
+		if _, err := prepareCandidate(context.Background(), rec, &plan, config, &options); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -375,11 +376,26 @@ func regionBenchmarkRecordings() map[string]*ir.Recording {
 			{parityRow(20, parityRun("1", 60, ir.CellAttrs{}))},
 		}),
 		"120x40_four_distant_counters": parityRecording(120, 40, [][]ir.Row{
-			{parityRow(5, parityRun("0", 5, ir.CellAttrs{}), parityRun("0", 110, ir.CellAttrs{})), parityRow(35, parityRun("0", 5, ir.CellAttrs{}), parityRun("0", 110, ir.CellAttrs{}))},
-			{parityRow(5, parityRun("1", 5, ir.CellAttrs{}), parityRun("0", 110, ir.CellAttrs{})), parityRow(35, parityRun("0", 5, ir.CellAttrs{}), parityRun("0", 110, ir.CellAttrs{}))},
-			{parityRow(5, parityRun("1", 5, ir.CellAttrs{}), parityRun("1", 110, ir.CellAttrs{})), parityRow(35, parityRun("0", 5, ir.CellAttrs{}), parityRun("0", 110, ir.CellAttrs{}))},
-			{parityRow(5, parityRun("1", 5, ir.CellAttrs{}), parityRun("1", 110, ir.CellAttrs{})), parityRow(35, parityRun("1", 5, ir.CellAttrs{}), parityRun("0", 110, ir.CellAttrs{}))},
-			{parityRow(5, parityRun("1", 5, ir.CellAttrs{}), parityRun("1", 110, ir.CellAttrs{})), parityRow(35, parityRun("1", 5, ir.CellAttrs{}), parityRun("1", 110, ir.CellAttrs{}))},
+			{
+				parityRow(5, parityRun("0", 5, ir.CellAttrs{}), parityRun("0", 110, ir.CellAttrs{})),
+				parityRow(35, parityRun("0", 5, ir.CellAttrs{}), parityRun("0", 110, ir.CellAttrs{})),
+			},
+			{
+				parityRow(5, parityRun("1", 5, ir.CellAttrs{}), parityRun("0", 110, ir.CellAttrs{})),
+				parityRow(35, parityRun("0", 5, ir.CellAttrs{}), parityRun("0", 110, ir.CellAttrs{})),
+			},
+			{
+				parityRow(5, parityRun("1", 5, ir.CellAttrs{}), parityRun("1", 110, ir.CellAttrs{})),
+				parityRow(35, parityRun("0", 5, ir.CellAttrs{}), parityRun("0", 110, ir.CellAttrs{})),
+			},
+			{
+				parityRow(5, parityRun("1", 5, ir.CellAttrs{}), parityRun("1", 110, ir.CellAttrs{})),
+				parityRow(35, parityRun("1", 5, ir.CellAttrs{}), parityRun("0", 110, ir.CellAttrs{})),
+			},
+			{
+				parityRow(5, parityRun("1", 5, ir.CellAttrs{}), parityRun("1", 110, ir.CellAttrs{})),
+				parityRow(35, parityRun("1", 5, ir.CellAttrs{}), parityRun("1", 110, ir.CellAttrs{})),
+			},
 		}),
 		"progress_monitor":   fixtures["adjacent-progress-bars"],
 		"scrolling_table":    fixtures["scrolling-table"],

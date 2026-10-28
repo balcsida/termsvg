@@ -25,10 +25,11 @@ type semanticPlan struct {
 type renderPlan = semanticPlan
 
 func buildRenderPlan(rec *ir.Recording, showCursor bool) renderPlan {
-	return buildRenderPlanWithOptions(rec, showCursor, DefaultOptions())
+	options := DefaultOptions()
+	return buildRenderPlanWithOptions(rec, showCursor, &options)
 }
 
-func buildRenderPlanWithOptions(rec *ir.Recording, showCursor bool, options Options) renderPlan {
+func buildRenderPlanWithOptions(rec *ir.Recording, showCursor bool, options *Options) renderPlan {
 	plan, err := buildSemanticPlan(context.Background(), rec, showCursor, options.MaxFPS, 1)
 	if err != nil {
 		return renderPlan{}

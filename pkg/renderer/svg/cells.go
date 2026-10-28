@@ -19,6 +19,8 @@ const maxInertGap = 28
 // hoistStaticCells extracts cell spans that remain visually identical for the
 // complete recording. Whole-row hoisting runs first; this pass handles rows
 // where labels, borders, and separators are static around a changing value.
+//
+//nolint:gocognit // decodes, compares and rewrites each row in one pass
 func (p *renderPlan) hoistStaticCells(width, height int, colors *color.Catalog) {
 	if width <= 0 || len(p.content.points) < 2 {
 		return
